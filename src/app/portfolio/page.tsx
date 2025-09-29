@@ -12,37 +12,42 @@ export default function PortfolioPage() {
     enabled: !!address,
   })
 
-  if (!isConnected) return <p className="p-8">Please connect your wallet to view your portfolio.</p>
-  if (isLoading) return <p className="p-8">Loading portfolio...</p>
-  if (!data || data.length === 0) return <p className="p-8">No RWA holdings found.</p>
+  if (!isConnected) return <p className="p-8 text-gray-400">Please connect your wallet to view your portfolio.</p>
+  if (isLoading) return <p className="p-8 text-gray-400">Loading portfolio...</p>
+  if (!data || data.length === 0) return <p className="p-8 text-gray-400">No RWA holdings found.</p>
 
   const total = data.reduce((sum: number, x: any) => sum + x.value, 0)
 
   return (
-    <main className="p-8">
-      <h1 className="text-2xl font-bold mb-6">My Portfolio</h1>
-      <p className="mb-4 text-gray-600">Wallet: {address}</p>
-      <p className="mb-4 font-semibold">Total value: ${total.toFixed(2)}</p>
-      <table className="min-w-full border">
-        <thead className="bg-gray-100">
-          <tr>
-            <th className="px-4 py-2 border">Token</th>
-            <th className="px-4 py-2 border">Balance</th>
-            <th className="px-4 py-2 border">Price (USD)</th>
-            <th className="px-4 py-2 border">Value (USD)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((item: any) => (
-            <tr key={item.symbol}>
-              <td className="px-4 py-2 border">{item.symbol}</td>
-              <td className="px-4 py-2 border">{item.balance.toFixed(4)}</td>
-              <td className="px-4 py-2 border">${item.price.toFixed(2)}</td>
-              <td className="px-4 py-2 border">${item.value.toFixed(2)}</td>
+    <div>
+      <h1 className="text-2xl font-bold mb-4">My Portfolio</h1>
+      <p className="mb-2 text-gray-400">Wallet: {address}</p>
+      <p className="mb-6 font-semibold">Total value: ${total.toFixed(2)}</p>
+
+      <div className="overflow-hidden rounded-xl shadow bg-[#121826]">
+        <table className="min-w-full divide-y divide-gray-700">
+          <thead className="bg-[#1a2130]">
+            <tr>
+              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Token</th>
+              <th className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400">Balance</th>
+              <th className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400">Price</th>
+              <th className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400">Value</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+          </thead>
+          <tbody className="divide-y divide-gray-800">
+            {data.map((item: any) => (
+              <tr key={item.symbol} className="hover:bg-[#1a2130] transition-colors">
+                <td className="px-6 py-4 font-medium text-lg">{item.symbol}</td>
+                <td className="px-6 py-4 text-right">{item.balance.toFixed(4)}</td>
+                <td className="px-6 py-4 text-right">${item.price.toFixed(2)}</td>
+                <td className="px-6 py-4 text-right font-semibold">
+                  ${(item.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
