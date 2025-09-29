@@ -1,20 +1,31 @@
-# Node modules
-/node_modules
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# Compilation output
-/dist
+# Next.js build output
+.next/
+out/
 
-# pnpm deploy output
-/bundle
+# Local environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# Hardhat Build Artifacts
-/artifacts
+# OS files
+.DS_Store
+Thumbs.db
 
-# Hardhat compilation (v2) support directory
-/cache
+# VSCode settings
+.vscode/
 
-# Typechain output
-/types
+# Hardhat cache & artifacts
+hardhat/cache/
+hardhat/artifacts/
 
-# Hardhat coverage reports
-/coverage
+# Logs
+logs
+*.log
