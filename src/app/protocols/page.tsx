@@ -30,6 +30,20 @@ const formatPercentage = (value: number | null | undefined) => {
   return `${numeric.toFixed(2)}%`
 }
 
+const normalizeUrl = (value: string | null | undefined) => {
+  if (!value || typeof value !== 'string') return null
+
+  try {
+    return new URL(value).toString()
+  } catch {
+    try {
+      return new URL(`https://${value}`).toString()
+    } catch {
+      return null
+    }
+  }
+}
+
 export default function ProtocolsPage() {
   const { data: protocols, isLoading: loadingProtocols } = useQuery({
     queryKey: ['protocols'],
@@ -205,6 +219,36 @@ export default function ProtocolsPage() {
     return combined.find((item: any) => item.slug === selectedSlug) ?? null
   }, [combined, selectedSlug])
 
+  const linkButtons = useMemo(() => {
+    if (!activeSelection) return []
+
+    const buttons: { label: string; href: string }[] = []
+
+    const siteUrl = normalizeUrl(activeSelection.url)
+    if (siteUrl) {
+      buttons.push({ label: 'Visit Protocol', href: siteUrl })
+    }
+
+    const docsCandidate = Array.isArray(activeSelection.audit_links)
+      ? activeSelection.audit_links.find((entry: any) => typeof entry === 'string')
+      : null
+    const docsUrl = normalizeUrl(docsCandidate as string | undefined)
+    if (docsUrl) {
+      buttons.push({ label: 'Docs', href: docsUrl })
+    }
+
+    const slug = typeof activeSelection.slug === 'string' ? activeSelection.slug : null
+    if (slug) {
+      const llamaUrl = `https://defillama.com/protocol/${slug}`
+      const normalizedLlamaUrl = normalizeUrl(llamaUrl)
+      if (normalizedLlamaUrl) {
+        buttons.push({ label: 'DeFiLlama Page', href: normalizedLlamaUrl })
+      }
+    }
+
+    return buttons
+  }, [activeSelection])
+
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
@@ -336,6 +380,22 @@ export default function ProtocolsPage() {
               <p className="text-gray-300 text-sm">Risk Level: <span className="font-semibold text-yellow-400">Medium</span></p>
               <p className="text-gray-300 text-sm mt-2">Collateral: Treasury bills / Credit pools (data TBD)</p>
             </div>
+
+            {linkButtons.length > 0 && (
+              <div className="mt-6 flex flex-wrap gap-3">
+                {linkButtons.map((button) => (
+                  <a
+                    key={button.label}
+                    href={button.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center rounded-md border border-blue-500/40 px-4 py-2 text-sm font-medium text-blue-400 transition hover:bg-blue-500/10"
+                  >
+                    {button.label}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
