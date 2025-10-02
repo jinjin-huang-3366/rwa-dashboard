@@ -1,17 +1,25 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPortfolio } from '@/lib/portfolio'
 
 export default function PortfolioPage() {
   const { address, isConnected } = useAccount()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const { data, isLoading } = useQuery({
     queryKey: ['portfolio', address],
     queryFn: () => fetchPortfolio(address!),
-    enabled: !!address,
+    enabled: mounted && !!address,
   })
 
+  if (!mounted) return <p className="p-8 text-gray-400">Loading portfolio...</p>
   if (!isConnected) return <p className="p-8 text-gray-400">Please connect your wallet to view your portfolio.</p>
   if (isLoading) return <p className="p-8 text-gray-400">Loading portfolio...</p>
   if (!data || data.length === 0) return <p className="p-8 text-gray-400">No RWA holdings found.</p>

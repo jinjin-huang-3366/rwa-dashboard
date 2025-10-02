@@ -69,7 +69,33 @@ export async function fetchPortfolio(address: string) {
     console.error('USDY read failed', e)
   }
 
-  // 3) Local dev token(s) on Hardhat (DTT)
+  const localPriceLookup: Record<string, number> = {}
+  const priceKeys = Array.from(
+    new Set(
+      LOCAL_TOKENS
+        .map((token) => token.priceKey)
+        .filter((key): key is string => !!key && key.length > 0)
+    )
+  )
+  if (priceKeys.length > 0) {
+    try {
+      const priceResp = await axios.get(
+        `https://coins.llama.fi/prices/current/${priceKeys.join(',')}`
+      )
+      const coins = priceResp.data?.coins ?? {}
+      for (const key of priceKeys) {
+        const entry = coins[key]
+        const maybePrice = entry?.price
+        if (typeof maybePrice === 'number') {
+          localPriceLookup[key] = maybePrice
+        }
+      }
+    } catch (error) {
+      console.error('Local token price fetch failed', error)
+    }
+  }
+
+  // 3) Local dev token(s) on Hardhat
   try {
     for (const token of LOCAL_TOKENS) {
       const rawBalance = await localClient.readContract({
@@ -91,8 +117,9 @@ export async function fetchPortfolio(address: string) {
 
       const balance = Number(rawBalance) / 10 ** Number(decimals)
       if (balance > 0) {
-        // For dev, mock price as $1
-        results.push({ symbol, balance, price: 1, value: balance * 1 })
+        const priceKey = token.priceKey ?? ''
+        const price = localPriceLookup[priceKey] ?? 1
+        results.push({ symbol, balance, price, value: balance * price })
       }
     }
   } catch (e) {

@@ -1,0 +1,37 @@
+{
+  "testWallet": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "tokens": [
+    {
+      "name": "Maple Token",
+      "symbol": "MPL",
+      "initialMint": "500000",
+      "decimals": 18,
+      "address": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+      "priceKey": "coingecko:maple"
+    },
+    {
+      "name": "Centrifuge Token",
+      "symbol": "CFG",
+      "initialMint": "750000",
+      "decimals": 18,
+      "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+      "priceKey": "coingecko:centrifuge"
+    },
+    {
+      "name": "Goldfinch Token",
+      "symbol": "GFI",
+      "initialMint": "350000",
+      "decimals": 18,
+      "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+      "priceKey": "coingecko:goldfinch"
+    },
+    {
+      "name": "TokenFi Token",
+      "symbol": "TOKENFI",
+      "initialMint": "1000000",
+      "decimals": 18,
+      "address": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
+      "priceKey": "coingecko:tokenfi"
+    }
+  ]
+}

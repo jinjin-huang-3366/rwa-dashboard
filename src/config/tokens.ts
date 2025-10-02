@@ -1,3 +1,5 @@
+import deploymentConfig from '../../hardhat/config/deployment.json'
+
 export const RWA_TOKENS = ['MPL', 'CFG', 'GFI', 'TOKENFI']
 
 export const CONTRACTS = {
@@ -8,13 +10,30 @@ export const CONTRACTS = {
   // TODO: add Centrifuge pool token contracts here when you know which pools you want to track
 }
 
-export const LOCAL_TOKENS = [
-  {
-    address: "0x5FbDB2315678afecb367f032d93F642f64180aa3", // the tokenAddress from deploy.ts
-    symbol: "DTT",
-    decimals: 18,
-    name: "Dev Test Token",
-    chainId: 31337, // Hardhat local network
-  },
-];
+type DeploymentToken = {
+  address?: string
+  symbol: string
+  name: string
+  decimals?: number
+  chainId?: number
+  priceKey?: string
+}
 
+type DeploymentConfig = {
+  tokens?: DeploymentToken[]
+}
+
+const deployment = deploymentConfig as DeploymentConfig
+
+export const LOCAL_TOKENS = (deployment.tokens ?? [])
+  .filter((token): token is DeploymentToken & { address: string } =>
+    typeof token.address === 'string' && token.address.length > 0
+  )
+  .map((token) => ({
+    address: token.address,
+    symbol: token.symbol,
+    decimals: token.decimals ?? 18,
+    name: token.name,
+    chainId: token.chainId ?? 31337,
+    priceKey: token.priceKey,
+  }))
