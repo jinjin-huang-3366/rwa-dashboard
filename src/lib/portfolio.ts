@@ -1,7 +1,13 @@
 import axios from 'axios'
 import { createPublicClient, http } from 'viem'
 import { mainnet, hardhat } from 'viem/chains'
-import { CONTRACTS, RWA_TOKENS, LOCAL_TOKENS } from '@/config/tokens'
+import {
+  CONTRACTS,
+  RWA_TOKENS,
+  LOCAL_TOKENS,
+  TOKEN_PROTOCOLS,
+  ProtocolMetadata,
+} from '@/config/tokens'
 import { balanceOfAbi, decimalsAbi, symbolAbi } from '@/config/erc20Abi'
 
 // client for Ethereum mainnet
@@ -9,30 +15,62 @@ const client = createPublicClient({ chain: mainnet, transport: http() })
 // client for local Hardhat dev chain
 const localClient = createPublicClient({ chain: hardhat, transport: http() })
 
-export async function fetchPortfolio(address: string) {
-  let results: any[] = []
+export type PortfolioHolding = {
+  symbol: string
+  balance: number
+  price: number
+  value: number
+  protocol?: ProtocolMetadata
+}
+
+const normalizeSymbol = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined
+  return value.toUpperCase()
+}
+
+const getProtocolForSymbol = (symbol: string | undefined) => {
+  if (!symbol) return undefined
+  return TOKEN_PROTOCOLS[symbol]
+}
+
+export async function fetchPortfolio(address: string): Promise<PortfolioHolding[]> {
+  const results: PortfolioHolding[] = []
 
   // 1) Generic ERC-20s via DeFiLlama balances API
   const url = `https://coins.llama.fi/balances?address=${address}&chain=ethereum`
   try {
     const { data } = await axios.get(url)
 
-    if (data?.coins) {
-      const balances = Object.entries<any>(data.coins)
-        .filter(([_k, coin]) =>
-          RWA_TOKENS.some((t) => coin.symbol?.toUpperCase().includes(t))
-        )
-        .map(([_k, coin]) => {
-          const bal = coin.balance / 10 ** coin.decimals
-          return {
-            symbol: coin.symbol,
-            balance: bal,
-            price: coin.price,
-            value: bal * coin.price,
-          }
-        })
-      results = results.concat(balances)
-    }
+    const balancesFromLlama: PortfolioHolding[] = Object.values<any>(data?.coins ?? {})
+      .map((coin) => {
+        const symbol = normalizeSymbol(coin?.symbol)
+        if (!symbol || !RWA_TOKENS.includes(symbol)) {
+          return null
+        }
+
+        const decimals = Number(coin?.decimals ?? 18)
+        const divider = Number.isFinite(decimals) ? 10 ** decimals : 1
+        const rawBalance = Number(coin?.balance ?? 0)
+        const balance = divider !== 0 ? rawBalance / divider : 0
+
+        if (balance <= 0) {
+          return null
+        }
+
+        const price = Number(coin?.price ?? 0)
+        const value = balance * price
+
+        return {
+          symbol,
+          balance,
+          price,
+          value,
+          protocol: getProtocolForSymbol(symbol),
+        }
+      })
+      .filter((entry): entry is PortfolioHolding => entry !== null)
+
+    results.push(...balancesFromLlama)
   } catch (e) {
     console.error('DeFiLlama balances fetch failed', e)
   }
@@ -51,19 +89,31 @@ export async function fetchPortfolio(address: string) {
       abi: decimalsAbi,
       functionName: 'decimals',
     })
-    const symbol = await client.readContract({
+    const rawSymbol = await client.readContract({
       address: usdy,
       abi: symbolAbi,
       functionName: 'symbol',
     })
 
-    const balance = Number(rawBalance) / 10 ** Number(decimals)
+    const decimalsNumber = Number(decimals)
+    const divider = Number.isFinite(decimalsNumber) ? 10 ** decimalsNumber : 1
+    const balance = divider !== 0 ? Number(rawBalance) / divider : 0
+    const symbol = normalizeSymbol(rawSymbol) ?? 'USDY'
+
     if (balance > 0) {
       const priceResp = await axios.get(
         `https://coins.llama.fi/prices/current/ethereum:${usdy}`
       )
-      const price = priceResp.data.coins[`ethereum:${usdy}`].price
-      results.push({ symbol, balance, price, value: balance * price })
+      const priceEntry = priceResp.data?.coins?.[`ethereum:${usdy}`]
+      const price = typeof priceEntry?.price === 'number' ? priceEntry.price : 0
+
+      results.push({
+        symbol,
+        balance,
+        price,
+        value: balance * price,
+        protocol: CONTRACTS.USDY.protocol ?? getProtocolForSymbol(symbol),
+      })
     }
   } catch (e) {
     console.error('USDY read failed', e)
@@ -109,17 +159,28 @@ export async function fetchPortfolio(address: string) {
         abi: decimalsAbi,
         functionName: 'decimals',
       })
-      const symbol = await localClient.readContract({
+      const rawSymbol = await localClient.readContract({
         address: token.address as `0x${string}`,
         abi: symbolAbi,
         functionName: 'symbol',
       })
 
-      const balance = Number(rawBalance) / 10 ** Number(decimals)
+      const decimalsNumber = Number(decimals)
+      const divider = Number.isFinite(decimalsNumber) ? 10 ** decimalsNumber : 1
+      const balance = divider !== 0 ? Number(rawBalance) / divider : 0
+      const symbol = normalizeSymbol(rawSymbol) ?? token.symbol
+
       if (balance > 0) {
         const priceKey = token.priceKey ?? ''
-        const price = localPriceLookup[priceKey] ?? 1
-        results.push({ symbol, balance, price, value: balance * price })
+        const price = priceKey.length > 0 ? localPriceLookup[priceKey] ?? 1 : 1
+
+        results.push({
+          symbol,
+          balance,
+          price,
+          value: balance * price,
+          protocol: token.protocol ?? getProtocolForSymbol(symbol),
+        })
       }
     }
   } catch (e) {
