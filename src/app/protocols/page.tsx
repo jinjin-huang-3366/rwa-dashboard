@@ -1,35 +1,32 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchRWAProtocols, fetchRWAYields } from '@/lib/defillama'
+import { fetchRWAProtocols, fetchRWAYields, PROTOCOL_YIELD_SOURCES } from '@/lib/defillama'
+import axios from 'axios'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts'
 
 type SortKey = 'tvl' | 'apy'
 type SortDir = 'asc' | 'desc'
 
 const formatCurrency = (value: number | null | undefined) => {
-  if (value === null || value === undefined) {
-    return 'N/A'
-  }
-
+  if (value === null || value === undefined) return 'N/A'
   const numeric = Number(value)
-  if (Number.isNaN(numeric)) {
-    return 'N/A'
-  }
-
+  if (Number.isNaN(numeric)) return 'N/A'
   return `$${numeric.toLocaleString()}`
 }
 
 const formatPercentage = (value: number | null | undefined) => {
-  if (value === null || value === undefined) {
-    return 'N/A'
-  }
-
+  if (value === null || value === undefined) return 'N/A'
   const numeric = Number(value)
-  if (Number.isNaN(numeric)) {
-    return 'N/A'
-  }
-
+  if (Number.isNaN(numeric)) return 'N/A'
   return `${numeric.toFixed(2)}%`
 }
 
@@ -49,14 +46,133 @@ export default function ProtocolsPage() {
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
 
-  const combined = useMemo(() => {
-    if (!protocols) {
-      return []
+  // new: chart state
+  const [tvlHistory, setTvlHistory] = useState<any[]>([])
+  const [apyHistory, setApyHistory] = useState<any[]>([])
+
+  useEffect(() => {
+    if (!selectedSlug) return
+
+    const aliasProjects = PROTOCOL_YIELD_SOURCES[selectedSlug] ?? [selectedSlug]
+
+    const buildTvlHistory = (protocolData: any) => {
+      const totals = new Map<number, number>()
+
+      const accumulate = (entry: any) => {
+        const date = typeof entry?.date === 'number' ? entry.date : null
+        if (!date) return
+
+        let value = entry?.totalLiquidityUSD ?? entry?.totalLiquidity ?? entry?.tvl ?? entry?.tvlUsd
+        if (value == null && entry?.tokens && typeof entry.tokens === 'object') {
+          value = Object.values(entry.tokens).reduce((acc: number, current: any) => {
+            const numeric = Number(current)
+            return Number.isFinite(numeric) ? acc + numeric : acc
+          }, 0)
+        }
+
+        const numericValue = Number(value)
+        if (!Number.isFinite(numericValue)) return
+
+        totals.set(date, (totals.get(date) ?? 0) + numericValue)
+      }
+
+      const topLevel = Array.isArray(protocolData?.tvl) ? protocolData.tvl : []
+      topLevel.forEach(accumulate)
+
+      const chainSegments = protocolData?.chainTvls ?? {}
+      Object.values(chainSegments).forEach((chain: any) => {
+        const segment = Array.isArray(chain?.tvl) ? chain.tvl : []
+        segment.forEach(accumulate)
+      })
+
+      return Array.from(totals.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([date, tvl]) => ({
+          date: new Date(date * 1000).toLocaleDateString(),
+          tvl,
+        }))
     }
 
+    const loadCharts = async () => {
+      try {
+        setTvlHistory([])
+        setApyHistory([])
+
+        const fetchApyHistory = async () => {
+          const matchingPools = (yields ?? []).filter((entry: any) =>
+            aliasProjects.includes(entry.project)
+          )
+
+          if (matchingPools.length === 0) return []
+
+          const targetPool = matchingPools.reduce((prev: any, current: any) => {
+            const prevTvl = Number(prev?.tvlUsd ?? 0)
+            const currentTvl = Number(current?.tvlUsd ?? 0)
+            return currentTvl > prevTvl ? current : prev
+          }, matchingPools[0])
+
+          if (!targetPool?.pool) return []
+
+          const { data } = await axios.get(`https://yields.llama.fi/chart/${targetPool.pool}`)
+
+          return (data?.data ?? [])
+            .map((point: any) => {
+              const timestamp =
+                typeof point?.timestamp === 'number'
+                  ? point.timestamp * 1000
+                  : Date.parse(point?.timestamp ?? '')
+
+              if (!Number.isFinite(timestamp)) return null
+
+              const apyValue = Number(point?.apy)
+              if (!Number.isFinite(apyValue)) return null
+
+              return {
+                date: new Date(timestamp).toLocaleDateString(),
+                apy: apyValue,
+              }
+            })
+            .filter(Boolean)
+        }
+
+        const [tvlResponse, apySeries] = await Promise.all([
+          axios.get(`https://api.llama.fi/protocol/${selectedSlug}`),
+          fetchApyHistory(),
+        ])
+
+        const tvlSeries = buildTvlHistory(tvlResponse.data)
+
+        setTvlHistory(tvlSeries ?? [])
+        setApyHistory(apySeries ?? [])
+      } catch (err) {
+        console.error('Chart fetch failed:', err)
+        setTvlHistory([])
+        setApyHistory([])
+      }
+    }
+
+    loadCharts()
+  }, [selectedSlug, yields])
+
+  const combined = useMemo(() => {
+    if (!protocols) return []
+
     return protocols.map((protocol: any) => {
-      const pool = yields?.find((entry: any) => entry.project === protocol.slug)
-      const apyValue = pool?.apy
+      const aliases = PROTOCOL_YIELD_SOURCES[protocol.slug] ?? [protocol.slug]
+      const matchingPools = (yields ?? []).filter((entry: any) =>
+        aliases.includes(entry.project)
+      )
+
+      const primaryPool =
+        matchingPools.length > 0
+          ? matchingPools.reduce((prev: any, current: any) => {
+              const prevTvl = Number(prev?.tvlUsd ?? 0)
+              const currentTvl = Number(current?.tvlUsd ?? 0)
+              return currentTvl > prevTvl ? current : prev
+            })
+          : null
+
+      const apyValue = primaryPool?.apy
       const numericApy =
         apyValue === null || apyValue === undefined ? null : Number(apyValue)
 
@@ -68,7 +184,7 @@ export default function ProtocolsPage() {
         ...protocol,
         apy:
           numericApy !== null && Number.isFinite(numericApy) ? numericApy : null,
-        chain: pool?.chain ?? 'N/A',
+        chain: primaryPool?.chain ?? protocol.chain ?? 'N/A',
         tvl:
           numericTvl !== null && Number.isFinite(numericTvl) ? numericTvl : null,
       }
@@ -76,10 +192,7 @@ export default function ProtocolsPage() {
   }, [protocols, yields])
 
   const sorted = useMemo(() => {
-    if (combined.length === 0) {
-      return []
-    }
-
+    if (combined.length === 0) return []
     return [...combined].sort((a, b) => {
       const aVal = sortKey === 'tvl' ? a.tvl ?? 0 : a.apy ?? 0
       const bVal = sortKey === 'tvl' ? b.tvl ?? 0 : b.apy ?? 0
@@ -88,10 +201,7 @@ export default function ProtocolsPage() {
   }, [combined, sortDir, sortKey])
 
   const activeSelection = useMemo(() => {
-    if (!selectedSlug) {
-      return null
-    }
-
+    if (!selectedSlug) return null
     return combined.find((item: any) => item.slug === selectedSlug) ?? null
   }, [combined, selectedSlug])
 
@@ -166,13 +276,14 @@ export default function ProtocolsPage() {
 
       {activeSelection && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#121826] rounded-xl shadow-xl p-6 w-full max-w-lg relative">
+          <div className="bg-[#121826] rounded-xl shadow-xl p-6 w-full max-w-2xl relative">
             <button
               className="absolute top-3 right-3 text-gray-400 hover:text-white"
               onClick={() => setSelectedSlug(null)}
             >
               Close
             </button>
+
             <div className="flex items-center gap-3 mb-4">
               {activeSelection.logo ? (
                 <img src={activeSelection.logo} alt={activeSelection.name} className="w-10 h-10 rounded-full" />
@@ -181,12 +292,47 @@ export default function ProtocolsPage() {
               )}
               <h2 className="text-xl font-bold">{activeSelection.name}</h2>
             </div>
+
             <p className="text-gray-400 mb-2">Category: {activeSelection.category}</p>
             <p className="text-gray-400 mb-2">Chain: {activeSelection.chain ?? 'N/A'}</p>
             <p className="text-gray-400 mb-4">TVL: {formatCurrency(activeSelection.tvl)}</p>
             <p className="text-gray-400 mb-4">APY: {formatPercentage(activeSelection.apy)}</p>
 
-            <div className="mt-4 p-4 bg-[#1a2130] rounded-lg">
+            {/* Charts */}
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-gray-200 text-sm mb-2">TVL History</h3>
+                {tvlHistory.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={tvlHistory}>
+                      <XAxis dataKey="date" />
+                      <YAxis hide />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="tvl" stroke="#3b82f6" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-gray-500 text-xs italic">TVL history not available.</p>
+                )}
+              </div>
+              <div>
+                <h3 className="text-gray-200 text-sm mb-2">APY History</h3>
+                {apyHistory.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={200}>
+                    <LineChart data={apyHistory}>
+                      <XAxis dataKey="date" />
+                      <YAxis hide />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="apy" stroke="#10b981" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-gray-500 text-xs italic">APY history not available.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 p-4 bg-[#1a2130] rounded-lg">
               <p className="text-gray-300 text-sm">Risk Level: <span className="font-semibold text-yellow-400">Medium</span></p>
               <p className="text-gray-300 text-sm mt-2">Collateral: Treasury bills / Credit pools (data TBD)</p>
             </div>
