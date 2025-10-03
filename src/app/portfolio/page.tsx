@@ -5,6 +5,7 @@ import { useAccount } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPortfolio, type PortfolioHolding } from '@/lib/portfolio'
 import { fetchRWAProtocols } from '@/lib/defillama'
+import { getProtocolRiskSummary } from '@/lib/risk'
 
 type ProtocolSummary = {
   slug: string
@@ -102,6 +103,8 @@ export default function PortfolioPage() {
             : undefined
         const value = Number.isFinite(holding.value) ? holding.value : 0
         const share = tvl && tvl > 0 && value > 0 ? (value / tvl) * 100 : null
+        const slug = protocolMeta?.slug
+        const risk = slug ? getProtocolRiskSummary(slug) : null
 
         return {
           holding,
@@ -109,6 +112,7 @@ export default function PortfolioPage() {
           protocolData,
           tvl,
           share,
+          risk,
         }
       })
       .sort((a, b) => b.holding.value - a.holding.value)
@@ -138,7 +142,7 @@ export default function PortfolioPage() {
       <p className="mb-6 font-semibold">Total value: {formatCurrency(totalValue)}</p>
 
       <div className="space-y-4">
-        {enrichedHoldings.map(({ holding, protocolMeta, protocolData, tvl, share }) => {
+        {enrichedHoldings.map(({ holding, protocolMeta, protocolData, tvl, share, risk }) => {
           const protocolName = protocolMeta?.name ?? protocolData?.name ?? holding.symbol
           const possessiveSuffix = protocolName.endsWith("'s") ? '' : "'s"
           const shareText = formatPercent(share)
@@ -146,6 +150,7 @@ export default function PortfolioPage() {
             ? formatCurrency(tvl, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
             : null
           const progressWidth = share !== null ? Math.min(share, 100) : 0
+          const riskScoreText = risk ? risk.score.toFixed(1) : null
 
           return (
             <div
@@ -206,6 +211,16 @@ export default function PortfolioPage() {
                 <span className="rounded-full bg-[#1a2130] px-3 py-1 text-gray-300">
                   Protocol: {protocolName}
                 </span>
+                {risk ? (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm font-semibold ${risk.level.badgeClass}`}
+                  >
+                    Risk: {risk.level.label}
+                    {riskScoreText ? (
+                      <span className="text-xs font-normal text-gray-200/80">{riskScoreText}</span>
+                    ) : null}
+                  </span>
+                ) : null}
                 {tvlText ? (
                   <span className="rounded-full bg-[#1a2130] px-3 py-1 text-gray-300">
                     TVL: {tvlText}
@@ -215,6 +230,44 @@ export default function PortfolioPage() {
                   USD value: {formatCurrency(holding.value)}
                 </span>
               </div>
+
+              {risk ? (
+                <div className="mt-6 rounded-lg border border-gray-700 bg-[#1a2130] p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-gray-300">Risk breakdown</p>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${risk.level.badgeClass}`}
+                    >
+                      {risk.level.label}
+                      {riskScoreText ? (
+                        <span className="ml-1 text-[11px] font-normal text-gray-200/80">({riskScoreText})</span>
+                      ) : null}
+                    </span>
+                  </div>
+                  <dl className="mt-4 space-y-3 text-sm text-gray-300">
+                    <div>
+                      <dt className="font-semibold text-gray-200">Audit</dt>
+                      <dd>{risk.components.audit.label}. {risk.components.audit.detail}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-semibold text-gray-200">Collateral</dt>
+                      <dd>{risk.components.collateral.label}. {risk.components.collateral.detail}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-semibold text-gray-200">Centralization</dt>
+                      <dd>{risk.components.centralization.label}. {risk.components.centralization.detail}</dd>
+                    </div>
+                  </dl>
+                  <p className="mt-4 text-xs text-gray-500">Scores weight audit (35%), collateral (40%), and centralization (25%). Lower scores indicate comparatively lower risk.</p>
+                  {risk.notes.length > 0 && (
+                    <ul className="mt-4 space-y-2 text-xs text-gray-400">
+                      {risk.notes.map((note) => (
+                        <li key={note}>- {note}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
             </div>
           )
         })}

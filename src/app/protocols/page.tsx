@@ -3,6 +3,8 @@
 import { useMemo, useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchRWAProtocols, fetchRWAYields, PROTOCOL_YIELD_SOURCES } from '@/lib/defillama'
+import { RISK_LEVEL_BANDS } from '@/config/risk'
+import { getProtocolRiskSummary, type ProtocolRiskSummary } from '@/lib/risk'
 import axios from 'axios'
 import {
   LineChart,
@@ -55,6 +57,22 @@ export default function ProtocolsPage() {
     queryKey: ['yields'],
     queryFn: fetchRWAYields,
   })
+
+  const riskBySlug = useMemo(() => {
+    const map = {} as Record<string, ProtocolRiskSummary>
+
+    (protocols ?? []).forEach((protocol: any) => {
+      if (!protocol?.slug) return
+
+      const summary = getProtocolRiskSummary(protocol.slug)
+      if (summary) {
+        map[protocol.slug] = summary
+      }
+    })
+
+    return map
+  }, [protocols])
+
 
   const [sortKey, setSortKey] = useState<SortKey>('tvl')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -199,6 +217,7 @@ export default function ProtocolsPage() {
         apy:
           numericApy !== null && Number.isFinite(numericApy) ? numericApy : null,
         chain: primaryPool?.chain ?? protocol.chain ?? 'N/A',
+        risk: riskBySlug[protocol.slug] ?? null,
         tvl:
           numericTvl !== null && Number.isFinite(numericTvl) ? numericTvl : null,
       }
@@ -218,6 +237,10 @@ export default function ProtocolsPage() {
     if (!selectedSlug) return null
     return combined.find((item: any) => item.slug === selectedSlug) ?? null
   }, [combined, selectedSlug])
+
+  const activeRisk = activeSelection?.slug
+    ? riskBySlug[activeSelection.slug] ?? null
+    : null
 
   const linkButtons = useMemo(() => {
     if (!activeSelection) return []
@@ -272,6 +295,18 @@ export default function ProtocolsPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-6">RWA Protocols</h1>
+      <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+        <span className="font-semibold text-gray-300">Risk legend:</span>
+        {RISK_LEVEL_BANDS.map((band) => (
+          <span
+            key={band.key}
+            className={`inline-flex items-center rounded-full border px-2.5 py-1 font-semibold ${band.badgeClass}`}
+          >
+            {band.label}
+          </span>
+        ))}
+        <span className="text-gray-500">Scores weight audit 35%, collateral 40%, centralization 25%; lower score signals lower relative risk.</span>
+      </div>
       <div className="overflow-hidden rounded-xl shadow bg-[#121826]">
         <table className="min-w-full divide-y divide-gray-700">
           <thead className="bg-[#1a2130]">
@@ -279,6 +314,7 @@ export default function ProtocolsPage() {
               <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Protocol</th>
               <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Category</th>
               <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Chain</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Risk</th>
               <th
                 className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400 cursor-pointer"
                 onClick={() => toggleSort('tvl')}
@@ -294,33 +330,48 @@ export default function ProtocolsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
-            {sorted.map((protocol: any) => (
-              <tr
-                key={protocol.slug}
-                className="hover:bg-[#1a2130] transition-colors cursor-pointer"
-                onClick={() => setSelectedSlug(protocol.slug)}
-              >
-                <td className="px-6 py-4 font-medium flex items-center gap-3">
-                  {protocol.logo ? (
-                    <img src={protocol.logo} alt={protocol.name} className="w-6 h-6 rounded-full" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-gray-600" />
-                  )}
-                  {protocol.name}
-                </td>
-                <td className="px-6 py-4 text-gray-300">{protocol.category}</td>
-                <td className="px-6 py-4 text-gray-300">{protocol.chain ?? 'N/A'}</td>
-                <td className="px-6 py-4 text-right">{formatCurrency(protocol.tvl)}</td>
-                <td className="px-6 py-4 text-right">{formatPercentage(protocol.apy)}</td>
-              </tr>
-            ))}
+            {sorted.map((protocol: any) => {
+              const risk = protocol.risk ?? riskBySlug[protocol.slug] ?? null
+
+              return (
+                <tr
+                  key={protocol.slug}
+                  className="hover:bg-[#1a2130] transition-colors cursor-pointer"
+                  onClick={() => setSelectedSlug(protocol.slug)}
+                >
+                  <td className="px-6 py-4 font-medium flex items-center gap-3">
+                    {protocol.logo ? (
+                      <img src={protocol.logo} alt={protocol.name} className="w-6 h-6 rounded-full" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-gray-600" />
+                    )}
+                    {protocol.name}
+                  </td>
+                  <td className="px-6 py-4 text-gray-300">{protocol.category}</td>
+                  <td className="px-6 py-4 text-gray-300">{protocol.chain ?? 'N/A'}</td>
+                  <td className="px-6 py-4">
+                    {risk ? (
+                      <span
+                        className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${risk.level.badgeClass}`}
+                      >
+                        {risk.level.label}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500">Unknown</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-right">{formatCurrency(protocol.tvl)}</td>
+                  <td className="px-6 py-4 text-right">{formatPercentage(protocol.apy)}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
 
       {activeSelection && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#121826] rounded-xl shadow-xl p-6 w-full max-w-2xl relative">
+          <div className="bg-[#121826] rounded-xl shadow-xl w-full max-w-2xl relative flex max-h-[90vh] flex-col overflow-y-auto p-6">
             <button
               className="absolute top-3 right-3 text-gray-400 hover:text-white"
               onClick={() => setSelectedSlug(null)}
@@ -376,9 +427,46 @@ export default function ProtocolsPage() {
               </div>
             </div>
 
-            <div className="mt-6 p-4 bg-[#1a2130] rounded-lg">
-              <p className="text-gray-300 text-sm">Risk Level: <span className="font-semibold text-yellow-400">Medium</span></p>
-              <p className="text-gray-300 text-sm mt-2">Collateral: Treasury bills / Credit pools (data TBD)</p>
+            <div className="mt-6">
+              {activeRisk ? (
+                <div className="rounded-lg border border-gray-700 bg-[#1a2130] p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-gray-300">Risk level</p>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${activeRisk.level.badgeClass}`}
+                    >
+                      {activeRisk.level.label}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">Composite score {activeRisk.score.toFixed(1)} (lower is safer).</p>
+                  <dl className="mt-4 space-y-3 text-sm text-gray-300">
+                    <div>
+                      <dt className="font-semibold text-gray-200">Audit</dt>
+                      <dd>{activeRisk.components.audit.label}. {activeRisk.components.audit.detail}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-semibold text-gray-200">Collateral</dt>
+                      <dd>{activeRisk.components.collateral.label}. {activeRisk.components.collateral.detail}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-semibold text-gray-200">Centralization</dt>
+                      <dd>{activeRisk.components.centralization.label}. {activeRisk.components.centralization.detail}</dd>
+                    </div>
+                  </dl>
+                  <p className="mt-4 text-xs text-gray-500">Scores weight audit (35%), collateral (40%), and centralization (25%). Lower scores indicate comparatively lower risk.</p>
+                  {activeRisk.notes.length > 0 && (
+                    <ul className="mt-4 space-y-2 text-xs text-gray-400">
+                      {activeRisk.notes.map((note) => (
+                        <li key={note}>- {note}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-gray-700 bg-[#1a2130] p-4 text-sm text-gray-400">
+                  Risk data is not available for this protocol yet.
+                </div>
+              )}
             </div>
 
             {linkButtons.length > 0 && (
@@ -402,3 +490,5 @@ export default function ProtocolsPage() {
     </div>
   )
 }
+
+
