@@ -3,7 +3,7 @@ import { createPublicClient, http } from 'viem'
 import { mainnet, hardhat } from 'viem/chains'
 import {
   CONTRACTS,
-  RWA_TOKENS,
+  MAINNET_TOKENS,
   LOCAL_TOKENS,
   TOKEN_PROTOCOLS,
   ProtocolMetadata,
@@ -35,48 +35,77 @@ const getProtocolForSymbol = (symbol: string | undefined) => {
 
 export async function fetchPortfolio(address: string): Promise<PortfolioHolding[]> {
   const results: PortfolioHolding[] = []
+  const usdy = CONTRACTS.USDY.address as `0x${string}`
+  const usdyPriceKey = `ethereum:${usdy}`
 
-  // 1) Generic ERC-20s via DeFiLlama balances API
-  const url = `https://coins.llama.fi/balances?address=${address}&chain=ethereum`
-  try {
-    const { data } = await axios.get(url)
+  const priceKeySet = new Set<string>()
+  priceKeySet.add(usdyPriceKey)
 
-    const balancesFromLlama: PortfolioHolding[] = Object.values<any>(data?.coins ?? {})
-      .map((coin) => {
-        const symbol = normalizeSymbol(coin?.symbol)
-        if (!symbol || !RWA_TOKENS.includes(symbol)) {
-          return null
+  for (const token of MAINNET_TOKENS) {
+    if (token.priceKey) {
+      priceKeySet.add(token.priceKey)
+    }
+  }
+
+  for (const token of LOCAL_TOKENS) {
+    if (token.priceKey) {
+      priceKeySet.add(token.priceKey)
+    }
+  }
+
+  const priceLookup: Record<string, number> = {}
+  const priceKeys = Array.from(priceKeySet)
+
+  if (priceKeys.length > 0) {
+    try {
+      const priceResp = await axios.get(
+        `https://coins.llama.fi/prices/current/${priceKeys.join(',')}`
+      )
+      const coins = priceResp.data?.coins ?? {}
+      for (const key of priceKeys) {
+        const entry = coins[key]
+        const maybePrice = entry?.price
+        if (typeof maybePrice === 'number') {
+          priceLookup[key] = maybePrice
         }
+      }
+    } catch (error) {
+      console.error('Token price fetch failed', error)
+    }
+  }
 
-        const decimals = Number(coin?.decimals ?? 18)
-        const divider = Number.isFinite(decimals) ? 10 ** decimals : 1
-        const rawBalance = Number(coin?.balance ?? 0)
-        const balance = divider !== 0 ? rawBalance / divider : 0
-
-        if (balance <= 0) {
-          return null
-        }
-
-        const price = Number(coin?.price ?? 0)
-        const value = balance * price
-
-        return {
-          symbol,
-          balance,
-          price,
-          value,
-          protocol: getProtocolForSymbol(symbol),
-        }
+  // 1) RWA tokens via direct on-chain query (Ethereum mainnet)
+  for (const token of MAINNET_TOKENS) {
+    try {
+      const rawBalance = await client.readContract({
+        address: token.address as `0x${string}`,
+        abi: balanceOfAbi,
+        functionName: 'balanceOf',
+        args: [address as `0x${string}`],
       })
-      .filter((entry): entry is PortfolioHolding => entry !== null)
 
-    results.push(...balancesFromLlama)
-  } catch (e) {
-    console.error('DeFiLlama balances fetch failed', e)
+      const balance = Number(rawBalance) / 10 ** token.decimals
+
+      if (balance <= 0) {
+        continue
+      }
+
+      const symbol = normalizeSymbol(token.symbol) ?? token.symbol
+      const price = token.priceKey ? priceLookup[token.priceKey] ?? 0 : 0
+
+      results.push({
+        symbol,
+        balance,
+        price,
+        value: balance * price,
+        protocol: token.protocol ?? getProtocolForSymbol(symbol),
+      })
+    } catch (error) {
+      console.warn(`Mainnet token read skipped for ${token.symbol}`, error)
+    }
   }
 
   // 2) USDY via direct on-chain query (Ethereum mainnet)
-  const usdy = CONTRACTS.USDY.address as `0x${string}`
   try {
     const rawBalance = await client.readContract({
       address: usdy,
@@ -101,11 +130,7 @@ export async function fetchPortfolio(address: string): Promise<PortfolioHolding[
     const symbol = normalizeSymbol(rawSymbol) ?? 'USDY'
 
     if (balance > 0) {
-      const priceResp = await axios.get(
-        `https://coins.llama.fi/prices/current/ethereum:${usdy}`
-      )
-      const priceEntry = priceResp.data?.coins?.[`ethereum:${usdy}`]
-      const price = typeof priceEntry?.price === 'number' ? priceEntry.price : 0
+      const price = priceLookup[usdyPriceKey] ?? 0
 
       results.push({
         symbol,
@@ -119,35 +144,9 @@ export async function fetchPortfolio(address: string): Promise<PortfolioHolding[
     console.error('USDY read failed', e)
   }
 
-  const localPriceLookup: Record<string, number> = {}
-  const priceKeys = Array.from(
-    new Set(
-      LOCAL_TOKENS
-        .map((token) => token.priceKey)
-        .filter((key): key is string => !!key && key.length > 0)
-    )
-  )
-  if (priceKeys.length > 0) {
-    try {
-      const priceResp = await axios.get(
-        `https://coins.llama.fi/prices/current/${priceKeys.join(',')}`
-      )
-      const coins = priceResp.data?.coins ?? {}
-      for (const key of priceKeys) {
-        const entry = coins[key]
-        const maybePrice = entry?.price
-        if (typeof maybePrice === 'number') {
-          localPriceLookup[key] = maybePrice
-        }
-      }
-    } catch (error) {
-      console.error('Local token price fetch failed', error)
-    }
-  }
-
   // 3) Local dev token(s) on Hardhat
-  try {
-    for (const token of LOCAL_TOKENS) {
+  for (const token of LOCAL_TOKENS) {
+    try {
       const rawBalance = await localClient.readContract({
         address: token.address as `0x${string}`,
         abi: balanceOfAbi,
@@ -172,7 +171,7 @@ export async function fetchPortfolio(address: string): Promise<PortfolioHolding[
 
       if (balance > 0) {
         const priceKey = token.priceKey ?? ''
-        const price = priceKey.length > 0 ? localPriceLookup[priceKey] ?? 1 : 1
+        const price = priceKey.length > 0 ? priceLookup[priceKey] ?? 1 : 1
 
         results.push({
           symbol,
@@ -182,10 +181,11 @@ export async function fetchPortfolio(address: string): Promise<PortfolioHolding[
           protocol: token.protocol ?? getProtocolForSymbol(symbol),
         })
       }
+    } catch (error) {
+      console.warn(`Local token read skipped for ${token.symbol}`, error)
     }
-  } catch (e) {
-    console.error('Local token read failed', e)
   }
 
   return results
 }
+

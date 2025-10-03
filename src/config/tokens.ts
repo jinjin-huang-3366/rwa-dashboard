@@ -2,6 +2,8 @@ import deploymentConfig from '../../hardhat/config/deployment.json'
 
 export const RWA_TOKENS = ['MPL', 'CFG', 'GFI', 'TOKENFI'] as const
 
+export type RwaTokenSymbol = (typeof RWA_TOKENS)[number]
+
 export type ProtocolMetadata = {
   slug: string
   name: string
@@ -14,6 +16,45 @@ export const TOKEN_PROTOCOLS: Record<string, ProtocolMetadata> = {
   GFI: { slug: 'goldfinch', name: 'Goldfinch' },
   TOKENFI: { slug: 'tokenfi', name: 'TokenFi' },
 }
+
+export type MainnetTokenConfig = {
+  symbol: RwaTokenSymbol
+  address: string
+  decimals: number
+  priceKey: string
+  protocol?: ProtocolMetadata
+}
+
+export const MAINNET_TOKENS: MainnetTokenConfig[] = [
+  {
+    symbol: 'MPL',
+    address: '0x33349b282065b0284d756f0577fb39c158f935e6',
+    decimals: 18,
+    priceKey: 'coingecko:maple',
+    protocol: TOKEN_PROTOCOLS.MPL,
+  },
+  {
+    symbol: 'CFG',
+    address: '0xcccccccccc33d538dbc2ee4feab0a7a1ff4e8a94',
+    decimals: 18,
+    priceKey: 'coingecko:centrifuge',
+    protocol: TOKEN_PROTOCOLS.CFG,
+  },
+  {
+    symbol: 'GFI',
+    address: '0xdab396ccf3d84cf2d07c4454e10c8a6f5b008d2b',
+    decimals: 18,
+    priceKey: 'coingecko:goldfinch',
+    protocol: TOKEN_PROTOCOLS.GFI,
+  },
+  {
+    symbol: 'TOKENFI',
+    address: '0x4507cef57c46789ef8d1a19ea45f4216bae2b528',
+    decimals: 18,
+    priceKey: 'coingecko:tokenfi',
+    protocol: TOKEN_PROTOCOLS.TOKENFI,
+  },
+]
 
 export const CONTRACTS = {
   USDY: {
