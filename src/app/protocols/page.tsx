@@ -46,6 +46,15 @@ const normalizeUrl = (value: string | null | undefined) => {
   }
 }
 
+const calculateProjection = (amount: number, apy: number, months: number) => {
+  if (!Number.isFinite(amount) || !Number.isFinite(apy) || !Number.isFinite(months)) {
+    return amount
+  }
+
+  const years = months / 12
+  return amount * Math.pow(1 + apy / 100, years)
+}
+
 export default function ProtocolsPage() {
   const { data: protocols, isLoading: loadingProtocols } = useQuery({
     queryKey: ['protocols'],
@@ -77,6 +86,11 @@ export default function ProtocolsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('tvl')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
+
+  const [scenarioAmount, setScenarioAmount] = useState(10000)
+  const [scenarioMonths, setScenarioMonths] = useState(6)
+  const [primaryScenarioSlug, setPrimaryScenarioSlug] = useState<string | null>('ondo-yield-assets')
+  const [secondaryScenarioSlug, setSecondaryScenarioSlug] = useState<string | null>('maple')
 
   // new: chart state
   const [tvlHistory, setTvlHistory] = useState<any[]>([])
@@ -186,10 +200,12 @@ export default function ProtocolsPage() {
     loadCharts()
   }, [selectedSlug, yields])
 
+
   const combined = useMemo(() => {
     if (!protocols) return []
 
     return protocols.map((protocol: any) => {
+
       const aliases = PROTOCOL_YIELD_SOURCES[protocol.slug] ?? [protocol.slug]
       const matchingPools = (yields ?? []).filter((entry: any) =>
         aliases.includes(entry.project)
@@ -223,6 +239,28 @@ export default function ProtocolsPage() {
       }
     })
   }, [protocols, yields])
+
+  const scenarioOptions = useMemo((): { slug: string; name: string; apy: number | null }[] => {
+    return combined.map((entry: any) => ({
+      slug: entry.slug as string,
+      name: entry.name as string,
+      apy: typeof entry.apy === 'number' ? entry.apy : null,
+    }))
+  }, [combined])
+
+  useEffect(() => {
+    if (scenarioOptions.length === 0) return
+
+    if (!primaryScenarioSlug || !scenarioOptions.some((option) => option.slug === primaryScenarioSlug)) {
+      setPrimaryScenarioSlug(scenarioOptions[0]?.slug ?? null)
+    }
+
+    if (!secondaryScenarioSlug || !scenarioOptions.some((option) => option.slug === secondaryScenarioSlug)) {
+      const fallback = scenarioOptions.find((option) => option.slug !== (primaryScenarioSlug ?? ''))
+      setSecondaryScenarioSlug((fallback ?? scenarioOptions[0])?.slug ?? null)
+    }
+  }, [primaryScenarioSlug, secondaryScenarioSlug, scenarioOptions])
+
 
   const sorted = useMemo(() => {
     if (combined.length === 0) return []
@@ -272,6 +310,43 @@ export default function ProtocolsPage() {
     return buttons
   }, [activeSelection])
 
+  const scenarioPrimary = useMemo(() => {
+    return scenarioOptions.find((option) => option.slug === primaryScenarioSlug) ?? null
+  }, [primaryScenarioSlug, scenarioOptions])
+
+  const scenarioSecondary = useMemo(() => {
+    return scenarioOptions.find((option) => option.slug === secondaryScenarioSlug) ?? null
+  }, [scenarioOptions, secondaryScenarioSlug])
+
+  const primaryProjection = useMemo(() => {
+    if (!scenarioPrimary || scenarioPrimary.apy === null) return null
+
+    const projected = calculateProjection(Math.max(scenarioAmount, 0), scenarioPrimary.apy, Math.max(scenarioMonths, 0))
+    return {
+      apy: scenarioPrimary.apy,
+      projected,
+      gain: projected - Math.max(scenarioAmount, 0),
+      name: scenarioPrimary.name,
+    }
+  }, [scenarioAmount, scenarioMonths, scenarioPrimary])
+
+  const secondaryProjection = useMemo(() => {
+    if (!scenarioSecondary || scenarioSecondary.apy === null) return null
+
+    const projected = calculateProjection(Math.max(scenarioAmount, 0), scenarioSecondary.apy, Math.max(scenarioMonths, 0))
+    return {
+      apy: scenarioSecondary.apy,
+      projected,
+      gain: projected - Math.max(scenarioAmount, 0),
+      name: scenarioSecondary.name,
+    }
+  }, [scenarioAmount, scenarioMonths, scenarioSecondary])
+
+  const projectionDelta = useMemo(() => {
+    if (!primaryProjection || !secondaryProjection) return null
+    return secondaryProjection.projected - primaryProjection.projected
+  }, [primaryProjection, secondaryProjection])
+
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
@@ -294,6 +369,102 @@ export default function ProtocolsPage() {
 
   return (
     <div>
+      <div className="mb-8 rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
+        <h2 className="text-xl font-semibold text-white">Scenario Simulator</h2>
+        <p className="mt-1 text-sm text-gray-400">Compare projected outcomes for two protocols using simple compounding based on current APYs.</p>
+        <div className="mt-4 grid gap-4 md:grid-cols-4">
+          <label className="flex flex-col gap-1 text-sm text-gray-300">
+            <span>Investment amount (USD)</span>
+            <input
+              type="number"
+              min="0"
+              value={scenarioAmount}
+              onChange={(event) => {
+                const value = Number(event.target.value)
+                setScenarioAmount(Number.isFinite(value) && value >= 0 ? value : 0)
+              }}
+              className="rounded-md border border-gray-700 bg-[#0f1624] px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-300">
+            <span>Duration (months)</span>
+            <input
+              type="number"
+              min="0"
+              value={scenarioMonths}
+              onChange={(event) => {
+                const value = Number(event.target.value)
+                setScenarioMonths(Number.isFinite(value) && value >= 0 ? value : 0)
+              }}
+              className="rounded-md border border-gray-700 bg-[#0f1624] px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-300">
+            <span>Scenario A protocol</span>
+            <select
+              value={primaryScenarioSlug ?? ''}
+              onChange={(event) => setPrimaryScenarioSlug(event.target.value || null)}
+              className="rounded-md border border-gray-700 bg-[#0f1624] px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+            >
+              {scenarioOptions.map((option) => (
+                <option key={option.slug} value={option.slug} disabled={option.apy === null}>
+                  {option.name} {option.apy === null ? '(APY unavailable)' : `(${formatPercentage(option.apy)})`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm text-gray-300">
+            <span>Scenario B protocol</span>
+            <select
+              value={secondaryScenarioSlug ?? ''}
+              onChange={(event) => setSecondaryScenarioSlug(event.target.value || null)}
+              className="rounded-md border border-gray-700 bg-[#0f1624] px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+            >
+              {scenarioOptions.map((option) => (
+                <option key={option.slug} value={option.slug} disabled={option.apy === null}>
+                  {option.name} {option.apy === null ? '(APY unavailable)' : `(${formatPercentage(option.apy)})`}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg border border-gray-700 bg-[#1a2130] p-4">
+            <h3 className="text-sm font-semibold text-gray-200">Scenario A</h3>
+            {primaryProjection ? (
+              <div className="mt-3 space-y-2 text-sm text-gray-300">
+                <p>Protocol: {primaryProjection.name}</p>
+                <p>APY: {formatPercentage(primaryProjection.apy)}</p>
+                <p>Projected value: {formatCurrency(primaryProjection.projected)}</p>
+                <p>Gain: {formatCurrency(primaryProjection.gain)}</p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">APY data unavailable for the selected protocol.</p>
+            )}
+          </div>
+          <div className="rounded-lg border border-gray-700 bg-[#1a2130] p-4">
+            <h3 className="text-sm font-semibold text-gray-200">Scenario B</h3>
+            {secondaryProjection ? (
+              <div className="mt-3 space-y-2 text-sm text-gray-300">
+                <p>Protocol: {secondaryProjection.name}</p>
+                <p>APY: {formatPercentage(secondaryProjection.apy)}</p>
+                <p>Projected value: {formatCurrency(secondaryProjection.projected)}</p>
+                <p>Gain: {formatCurrency(secondaryProjection.gain)}</p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">APY data unavailable for the selected protocol.</p>
+            )}
+          </div>
+        </div>
+
+        {projectionDelta !== null && (
+          <p className={`mt-4 text-sm ${projectionDelta >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
+            {secondaryProjection?.name ?? 'Scenario B'} is {projectionDelta >= 0 ? 'ahead' : 'behind'} by {formatCurrency(Math.abs(projectionDelta))} after {scenarioMonths} month(s).
+          </p>
+        )}
+        <p className="mt-2 text-xs text-gray-500">Projections assume constant APYs with compounding over the chosen horizon. Actual performance may vary.</p>
+      </div>
       <h1 className="text-2xl font-bold mb-6">RWA Protocols</h1>
       <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-gray-400">
         <span className="font-semibold text-gray-300">Risk legend:</span>
