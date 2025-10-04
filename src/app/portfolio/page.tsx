@@ -102,7 +102,9 @@ export default function PortfolioPage() {
             ? protocolData.tvl
             : undefined
         const value = Number.isFinite(holding.value) ? holding.value : 0
-        const share = tvl && tvl > 0 && value > 0 ? (value / tvl) * 100 : null
+        const rawShare = tvl && tvl > 0 && value > 0 ? (value / tvl) * 100 : null
+        const share = rawShare !== null ? Math.min(rawShare, 100) : null
+        const shareCapped = rawShare !== null && share !== null ? rawShare > share : false
         const slug = protocolMeta?.slug
         const risk = slug ? getProtocolRiskSummary(slug) : null
 
@@ -111,7 +113,9 @@ export default function PortfolioPage() {
           protocolMeta,
           protocolData,
           tvl,
+          rawShare,
           share,
+          shareCapped,
           risk,
         }
       })
@@ -142,18 +146,31 @@ export default function PortfolioPage() {
       <p className="mb-6 font-semibold">Total value: {formatCurrency(totalValue)}</p>
 
       <div className="space-y-4">
-        {enrichedHoldings.map(({ holding, protocolMeta, protocolData, tvl, share, risk }) => {
-          const protocolName = protocolMeta?.name ?? protocolData?.name ?? holding.symbol
-          const possessiveSuffix = protocolName.endsWith("'s") ? '' : "'s"
-          const shareText = formatPercent(share)
-          const tvlText = tvl
-            ? formatCurrency(tvl, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-            : null
-          const progressWidth = share !== null ? Math.min(share, 100) : 0
-          const riskScoreText = risk ? risk.score.toFixed(1) : null
+        {enrichedHoldings.map(
+          ({ holding, protocolMeta, protocolData, tvl, rawShare, share, shareCapped, risk }) => {
+            const protocolName = protocolMeta?.name ?? protocolData?.name ?? holding.symbol
+            const possessiveSuffix = protocolName.endsWith("'s") ? '' : "'s"
+            const shareText =
+              share !== null
+                ? shareCapped
+                  ? '100%+'
+                  : formatPercent(share)
+                : null
+            const rawShareText =
+              shareCapped && rawShare !== null ? formatPercent(rawShare) : null
+            const shareNote = shareCapped
+              ? rawShareText
+                ? `Share capped at 100% because it exceeds reported TVL (raw ${rawShareText}).`
+                : 'Share capped at 100% because it exceeds reported TVL.'
+              : 'Share relative to current DeFiLlama TVL.'
+            const tvlText = tvl
+              ? formatCurrency(tvl, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+              : null
+            const progressWidth = share ?? 0
+            const riskScoreText = risk ? risk.score.toFixed(1) : null
 
-          return (
-            <div
+            return (
+              <div
               key={`${holding.symbol}-${protocolMeta?.slug ?? 'unknown'}`}
               className="rounded-xl border border-gray-700 bg-[#121826] p-6 shadow"
             >
@@ -201,9 +218,7 @@ export default function PortfolioPage() {
                       style={{ width: `${progressWidth}%` }}
                     />
                   </div>
-                  <p className="mt-2 text-xs text-gray-500">
-                    Share capped at 100% for visualization. Actual share: {shareText}.
-                  </p>
+                  <p className="mt-2 text-xs text-gray-500">{shareNote}</p>
                 </div>
               )}
 
