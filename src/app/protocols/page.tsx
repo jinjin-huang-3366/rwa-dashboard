@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchRWAProtocols, fetchRWAYields, PROTOCOL_YIELD_SOURCES } from '@/lib/defillama'
+import { fetchRWAProtocols, fetchRWAYields, PROTOCOL_YIELD_SOURCES, extractBorrowedValue } from '@/lib/defillama'
 import { RISK_LEVEL_BANDS } from '@/config/risk'
 import { getProtocolRiskSummary, type ProtocolRiskSummary } from '@/lib/risk'
 import axios from 'axios'
@@ -228,6 +228,15 @@ export default function ProtocolsPage() {
       const numericTvl =
         tvlValue === null || tvlValue === undefined ? null : Number(tvlValue)
 
+      const borrowedCandidate =
+        typeof protocol.borrowed === 'number' && Number.isFinite(protocol.borrowed)
+          ? protocol.borrowed
+          : extractBorrowedValue(protocol)
+      const numericBorrowed =
+        borrowedCandidate === null || borrowedCandidate === undefined
+          ? null
+          : Number(borrowedCandidate)
+
       return {
         ...protocol,
         apy:
@@ -236,6 +245,8 @@ export default function ProtocolsPage() {
         risk: riskBySlug[protocol.slug] ?? null,
         tvl:
           numericTvl !== null && Number.isFinite(numericTvl) ? numericTvl : null,
+        borrowed:
+          numericBorrowed !== null && Number.isFinite(numericBorrowed) ? numericBorrowed : null,
       }
     })
   }, [protocols, yields])
@@ -397,6 +408,11 @@ export default function ProtocolsPage() {
                 TVL {getSortIndicator('tvl')}
               </th>
               <th
+                className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400"
+              >
+                Borrowed
+              </th>
+              <th
                 className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400 cursor-pointer"
                 onClick={() => toggleSort('apy')}
               >
@@ -436,6 +452,7 @@ export default function ProtocolsPage() {
                     )}
                   </td>
                   <td className="px-6 py-4 text-right">{formatCurrency(protocol.tvl)}</td>
+                  <td className="px-6 py-4 text-right">{formatCurrency(protocol.borrowed)}</td>
                   <td className="px-6 py-4 text-right">{formatPercentage(protocol.apy)}</td>
                 </tr>
               )
@@ -562,6 +579,7 @@ export default function ProtocolsPage() {
             <p className="text-gray-400 mb-2">Category: {activeSelection.category}</p>
             <p className="text-gray-400 mb-2">Chain: {activeSelection.chain ?? 'N/A'}</p>
             <p className="text-gray-400 mb-4">TVL: {formatCurrency(activeSelection.tvl)}</p>
+            <p className="text-gray-400 mb-4">Borrowed: {formatCurrency(activeSelection.borrowed)}</p>
             <p className="text-gray-400 mb-4">APY: {formatPercentage(activeSelection.apy)}</p>
 
             {/* Charts */}
