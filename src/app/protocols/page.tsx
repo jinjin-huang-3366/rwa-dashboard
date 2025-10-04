@@ -369,7 +369,82 @@ export default function ProtocolsPage() {
 
   return (
     <div>
-      <div className="mb-8 rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
+      <h1 className="text-2xl font-bold mb-6">RWA Protocols</h1>
+      <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-gray-400">
+        <span className="font-semibold text-gray-300">Risk legend:</span>
+        {RISK_LEVEL_BANDS.map((band) => (
+          <span
+            key={band.key}
+            className={`inline-flex items-center rounded-full border px-2.5 py-1 font-semibold ${band.badgeClass}`}
+          >
+            {band.label}
+          </span>
+        ))}
+        <span className="text-gray-500">Scores weight audit 35%, collateral 40%, centralization 25%; lower score signals lower relative risk.</span>
+      </div>
+      <div className="overflow-hidden rounded-xl shadow bg-[#121826]">
+        <table className="min-w-full divide-y divide-gray-700">
+          <thead className="bg-[#1a2130]">
+            <tr>
+              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Protocol</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Category</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Chain</th>
+              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Risk</th>
+              <th
+                className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400 cursor-pointer"
+                onClick={() => toggleSort('tvl')}
+              >
+                TVL {getSortIndicator('tvl')}
+              </th>
+              <th
+                className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400 cursor-pointer"
+                onClick={() => toggleSort('apy')}
+              >
+                APY {getSortIndicator('apy')}
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800">
+            {sorted.map((protocol: any) => {
+              const risk = protocol.risk ?? riskBySlug[protocol.slug] ?? null
+
+              return (
+                <tr
+                  key={protocol.slug}
+                  className="hover:bg-[#1a2130] transition-colors cursor-pointer"
+                  onClick={() => setSelectedSlug(protocol.slug)}
+                >
+                  <td className="px-6 py-4 font-medium flex items-center gap-3">
+                    {protocol.logo ? (
+                      <img src={protocol.logo} alt={protocol.name} className="w-6 h-6 rounded-full" />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-gray-600" />
+                    )}
+                    {protocol.name}
+                  </td>
+                  <td className="px-6 py-4 text-gray-300">{protocol.category}</td>
+                  <td className="px-6 py-4 text-gray-300">{protocol.chain ?? 'N/A'}</td>
+                  <td className="px-6 py-4">
+                    {risk ? (
+                      <span
+                        className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${risk.level.badgeClass}`}
+                      >
+                        {risk.level.label}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500">Unknown</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-right">{formatCurrency(protocol.tvl)}</td>
+                  <td className="px-6 py-4 text-right">{formatPercentage(protocol.apy)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-8 mb-8 rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
         <h2 className="text-xl font-semibold text-white">Scenario Simulator</h2>
         <p className="mt-1 text-sm text-gray-400">Compare projected outcomes for two protocols using simple compounding based on current APYs.</p>
         <div className="mt-4 grid gap-4 md:grid-cols-4">
@@ -465,81 +540,6 @@ export default function ProtocolsPage() {
         )}
         <p className="mt-2 text-xs text-gray-500">Projections assume constant APYs with compounding over the chosen horizon. Actual performance may vary.</p>
       </div>
-      <h1 className="text-2xl font-bold mb-6">RWA Protocols</h1>
-      <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-gray-400">
-        <span className="font-semibold text-gray-300">Risk legend:</span>
-        {RISK_LEVEL_BANDS.map((band) => (
-          <span
-            key={band.key}
-            className={`inline-flex items-center rounded-full border px-2.5 py-1 font-semibold ${band.badgeClass}`}
-          >
-            {band.label}
-          </span>
-        ))}
-        <span className="text-gray-500">Scores weight audit 35%, collateral 40%, centralization 25%; lower score signals lower relative risk.</span>
-      </div>
-      <div className="overflow-hidden rounded-xl shadow bg-[#121826]">
-        <table className="min-w-full divide-y divide-gray-700">
-          <thead className="bg-[#1a2130]">
-            <tr>
-              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Protocol</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Category</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Chain</th>
-              <th className="px-6 py-3 text-left text-sm font-semibold uppercase tracking-wider text-gray-400">Risk</th>
-              <th
-                className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400 cursor-pointer"
-                onClick={() => toggleSort('tvl')}
-              >
-                TVL {getSortIndicator('tvl')}
-              </th>
-              <th
-                className="px-6 py-3 text-right text-sm font-semibold uppercase tracking-wider text-gray-400 cursor-pointer"
-                onClick={() => toggleSort('apy')}
-              >
-                APY {getSortIndicator('apy')}
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800">
-            {sorted.map((protocol: any) => {
-              const risk = protocol.risk ?? riskBySlug[protocol.slug] ?? null
-
-              return (
-                <tr
-                  key={protocol.slug}
-                  className="hover:bg-[#1a2130] transition-colors cursor-pointer"
-                  onClick={() => setSelectedSlug(protocol.slug)}
-                >
-                  <td className="px-6 py-4 font-medium flex items-center gap-3">
-                    {protocol.logo ? (
-                      <img src={protocol.logo} alt={protocol.name} className="w-6 h-6 rounded-full" />
-                    ) : (
-                      <div className="w-6 h-6 rounded-full bg-gray-600" />
-                    )}
-                    {protocol.name}
-                  </td>
-                  <td className="px-6 py-4 text-gray-300">{protocol.category}</td>
-                  <td className="px-6 py-4 text-gray-300">{protocol.chain ?? 'N/A'}</td>
-                  <td className="px-6 py-4">
-                    {risk ? (
-                      <span
-                        className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${risk.level.badgeClass}`}
-                      >
-                        {risk.level.label}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-gray-500">Unknown</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-right">{formatCurrency(protocol.tvl)}</td>
-                  <td className="px-6 py-4 text-right">{formatPercentage(protocol.apy)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-
       {activeSelection && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-[#121826] rounded-xl shadow-xl w-full max-w-2xl relative flex max-h-[90vh] flex-col overflow-y-auto p-6">
@@ -661,5 +661,7 @@ export default function ProtocolsPage() {
     </div>
   )
 }
+
+
 
 
