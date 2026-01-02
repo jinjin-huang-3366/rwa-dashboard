@@ -142,7 +142,8 @@ const normalizeNotificationPreferences = (
   }
 
   const candidate = value as Partial<NotificationPreferences>
-  const levelsCandidate = candidate.levels ?? {}
+  const levelsCandidate: Partial<Record<AlertSeverity, boolean>> =
+    candidate.levels ?? {}
 
   return {
     enabled:
