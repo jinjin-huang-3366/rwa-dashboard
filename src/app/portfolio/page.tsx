@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPortfolio, type PortfolioHolding } from '@/lib/portfolio'
@@ -19,6 +19,158 @@ type ProtocolSummary = {
 type CurrencyFormatOptions = {
   minimumFractionDigits?: number
   maximumFractionDigits?: number
+}
+
+type AlertSeverity = 'high' | 'medium' | 'low'
+
+type AlertCategory =
+  | 'risk'
+  | 'concentration'
+  | 'protocol-share'
+  | 'leverage'
+  | 'pricing'
+  | 'data'
+
+type PortfolioAlert = {
+  id: string
+  severity: AlertSeverity
+  category: AlertCategory
+  title: string
+  detail: string
+}
+
+type AlertPreferences = {
+  concentrationThreshold: number
+  protocolShareThreshold: number
+  borrowedRatioThreshold: number
+  includeModerateRisk: boolean
+  includeDataGaps: boolean
+}
+
+type NotificationPreferences = {
+  enabled: boolean
+  levels: Record<AlertSeverity, boolean>
+}
+
+type NotificationStatus = 'default' | 'granted' | 'denied' | 'unsupported'
+
+const ALERT_PREFERENCES_STORAGE_KEY = 'rwa.alert-preferences.v1'
+const NOTIFICATION_PREFERENCES_STORAGE_KEY = 'rwa.alert-notifications.v1'
+
+const DEFAULT_ALERT_PREFERENCES: AlertPreferences = {
+  concentrationThreshold: 30,
+  protocolShareThreshold: 10,
+  borrowedRatioThreshold: 70,
+  includeModerateRisk: true,
+  includeDataGaps: true,
+}
+
+const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
+  enabled: false,
+  levels: {
+    high: true,
+    medium: false,
+    low: false,
+  },
+}
+
+const ALERT_SEVERITY_LABELS: Record<AlertSeverity, string> = {
+  high: 'High',
+  medium: 'Moderate',
+  low: 'Low',
+}
+
+const ALERT_CONTAINER_CLASSES: Record<AlertSeverity, string> = {
+  high: 'border-red-400/50 bg-red-500/10',
+  medium: 'border-amber-400/50 bg-amber-500/10',
+  low: 'border-sky-400/50 bg-sky-500/10',
+}
+
+const ALERT_BADGE_CLASSES: Record<AlertSeverity, string> = {
+  high: 'border-red-400/60 text-red-200 bg-red-500/10',
+  medium: 'border-amber-400/60 text-amber-200 bg-amber-500/10',
+  low: 'border-sky-400/60 text-sky-200 bg-sky-500/10',
+}
+
+const ALERT_DOT_CLASSES: Record<AlertSeverity, string> = {
+  high: 'bg-red-400',
+  medium: 'bg-amber-400',
+  low: 'bg-sky-400',
+}
+
+const clampPercent = (value: number, fallback: number) => {
+  if (!Number.isFinite(value)) return fallback
+  return Math.min(Math.max(value, 0), 100)
+}
+
+const normalizeAlertPreferences = (value: unknown): AlertPreferences => {
+  if (!value || typeof value !== 'object') {
+    return DEFAULT_ALERT_PREFERENCES
+  }
+
+  const candidate = value as Partial<AlertPreferences>
+
+  return {
+    concentrationThreshold: clampPercent(
+      Number(candidate.concentrationThreshold),
+      DEFAULT_ALERT_PREFERENCES.concentrationThreshold
+    ),
+    protocolShareThreshold: clampPercent(
+      Number(candidate.protocolShareThreshold),
+      DEFAULT_ALERT_PREFERENCES.protocolShareThreshold
+    ),
+    borrowedRatioThreshold: clampPercent(
+      Number(candidate.borrowedRatioThreshold),
+      DEFAULT_ALERT_PREFERENCES.borrowedRatioThreshold
+    ),
+    includeModerateRisk:
+      typeof candidate.includeModerateRisk === 'boolean'
+        ? candidate.includeModerateRisk
+        : DEFAULT_ALERT_PREFERENCES.includeModerateRisk,
+    includeDataGaps:
+      typeof candidate.includeDataGaps === 'boolean'
+        ? candidate.includeDataGaps
+        : DEFAULT_ALERT_PREFERENCES.includeDataGaps,
+  }
+}
+
+const normalizeNotificationPreferences = (
+  value: unknown
+): NotificationPreferences => {
+  if (!value || typeof value !== 'object') {
+    return DEFAULT_NOTIFICATION_PREFERENCES
+  }
+
+  const candidate = value as Partial<NotificationPreferences>
+  const levelsCandidate = candidate.levels ?? {}
+
+  return {
+    enabled:
+      typeof candidate.enabled === 'boolean'
+        ? candidate.enabled
+        : DEFAULT_NOTIFICATION_PREFERENCES.enabled,
+    levels: {
+      high:
+        typeof levelsCandidate.high === 'boolean'
+          ? levelsCandidate.high
+          : DEFAULT_NOTIFICATION_PREFERENCES.levels.high,
+      medium:
+        typeof levelsCandidate.medium === 'boolean'
+          ? levelsCandidate.medium
+          : DEFAULT_NOTIFICATION_PREFERENCES.levels.medium,
+      low:
+        typeof levelsCandidate.low === 'boolean'
+          ? levelsCandidate.low
+          : DEFAULT_NOTIFICATION_PREFERENCES.levels.low,
+    },
+  }
+}
+
+const toAlertKey = (value: string) => {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
 }
 
 const formatCurrency = (
@@ -61,10 +213,64 @@ const formatPercent = (value: number | null) => {
 export default function PortfolioPage() {
   const { address, isConnected } = useAccount()
   const [mounted, setMounted] = useState(false)
+  const [alertPreferences, setAlertPreferences] = useState<AlertPreferences>(
+    DEFAULT_ALERT_PREFERENCES
+  )
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES)
+  const [notificationStatus, setNotificationStatus] =
+    useState<NotificationStatus>('default')
+  const notifiedAlertIds = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     setMounted(true)
+
+    if (typeof window === 'undefined') return
+
+    const storedAlerts = window.localStorage.getItem(ALERT_PREFERENCES_STORAGE_KEY)
+    if (storedAlerts) {
+      try {
+        setAlertPreferences(normalizeAlertPreferences(JSON.parse(storedAlerts)))
+      } catch (error) {
+        console.warn('Alert preferences failed to load', error)
+      }
+    }
+
+    const storedNotifications = window.localStorage.getItem(
+      NOTIFICATION_PREFERENCES_STORAGE_KEY
+    )
+    if (storedNotifications) {
+      try {
+        setNotificationPreferences(
+          normalizeNotificationPreferences(JSON.parse(storedNotifications))
+        )
+      } catch (error) {
+        console.warn('Notification preferences failed to load', error)
+      }
+    }
+
+    if ('Notification' in window) {
+      setNotificationStatus(Notification.permission)
+    } else {
+      setNotificationStatus('unsupported')
+    }
   }, [])
+
+  useEffect(() => {
+    if (!mounted || typeof window === 'undefined') return
+    window.localStorage.setItem(
+      ALERT_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(alertPreferences)
+    )
+  }, [alertPreferences, mounted])
+
+  useEffect(() => {
+    if (!mounted || typeof window === 'undefined') return
+    window.localStorage.setItem(
+      NOTIFICATION_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(notificationPreferences)
+    )
+  }, [notificationPreferences, mounted])
 
   const { data: portfolio, isLoading: loadingPortfolio } = useQuery<PortfolioHolding[]>({
     queryKey: ['portfolio', address],
@@ -165,6 +371,271 @@ export default function PortfolioPage() {
       .sort((a, b) => b.value - a.value)
   }, [baseHoldings, totalValue])
 
+  const requestNotificationPermission = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setNotificationStatus('unsupported')
+      return
+    }
+
+    try {
+      const permission = await Notification.requestPermission()
+      setNotificationStatus(permission)
+    } catch (error) {
+      console.warn('Notification permission request failed', error)
+    }
+  }
+
+  const sendTestNotification = () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+    if (notificationStatus !== 'granted') return
+
+    new Notification('RWA alerts enabled', {
+      body: 'You will receive portfolio risk alerts as they trigger.',
+      icon: '/logo.svg',
+      tag: 'rwa-alerts-test',
+    })
+  }
+
+  const alerts = useMemo(() => {
+    const results: PortfolioAlert[] = []
+    const severityRank: Record<AlertSeverity, number> = {
+      high: 0,
+      medium: 1,
+      low: 2,
+    }
+
+    const thresholdConcentration = clampPercent(
+      alertPreferences.concentrationThreshold,
+      DEFAULT_ALERT_PREFERENCES.concentrationThreshold
+    )
+    const thresholdProtocolShare = clampPercent(
+      alertPreferences.protocolShareThreshold,
+      DEFAULT_ALERT_PREFERENCES.protocolShareThreshold
+    )
+    const thresholdBorrowedRatio = clampPercent(
+      alertPreferences.borrowedRatioThreshold,
+      DEFAULT_ALERT_PREFERENCES.borrowedRatioThreshold
+    )
+
+    enrichedHoldings.forEach((entry) => {
+      const protocolName =
+        entry.protocolMeta?.name ?? entry.protocolData?.name ?? entry.holding.symbol
+      const protocolSlug =
+        entry.protocolMeta?.slug ??
+        entry.protocolData?.slug ??
+        entry.holding.symbol
+      const baseKey = toAlertKey(`${protocolSlug}-${entry.holding.symbol}`)
+
+      if (entry.risk) {
+        if (entry.risk.level.key === 'high') {
+          results.push({
+            id: `risk-high-${baseKey}`,
+            severity: 'high',
+            category: 'risk',
+            title: `${protocolName} is high risk`,
+            detail: `Risk score ${entry.risk.score.toFixed(
+              1
+            )}. Review audit status, collateral, and governance controls.`,
+          })
+        } else if (
+          entry.risk.level.key === 'moderate' &&
+          alertPreferences.includeModerateRisk
+        ) {
+          results.push({
+            id: `risk-moderate-${baseKey}`,
+            severity: 'medium',
+            category: 'risk',
+            title: `${protocolName} is moderate risk`,
+            detail: `Risk score ${entry.risk.score.toFixed(
+              1
+            )}. Monitor protocol updates and collateral performance.`,
+          })
+        }
+      } else if (alertPreferences.includeDataGaps) {
+        results.push({
+          id: `risk-missing-${baseKey}`,
+          severity: 'low',
+          category: 'data',
+          title: `Risk profile missing for ${protocolName}`,
+          detail: 'Risk scoring data is unavailable for this protocol.',
+        })
+      }
+
+      if (
+        entry.portfolioShare !== null &&
+        entry.portfolioShare >= thresholdConcentration
+      ) {
+        const severity: AlertSeverity =
+          entry.portfolioShare >= Math.max(thresholdConcentration * 1.5, 50)
+            ? 'high'
+            : 'medium'
+
+        results.push({
+          id: `concentration-${baseKey}`,
+          severity,
+          category: 'concentration',
+          title: `Concentration in ${entry.holding.symbol}`,
+          detail: `${formatPercent(entry.portfolioShare)} of your portfolio is in ${
+            entry.holding.symbol
+          }. Consider rebalancing to reduce concentration risk.`,
+        })
+      }
+
+      if (
+        entry.protocolShare !== null &&
+        entry.protocolShare >= thresholdProtocolShare
+      ) {
+        const rawShare =
+          entry.protocolShareCapped && entry.protocolRawShare !== null
+            ? entry.protocolRawShare
+            : entry.protocolShare
+        const shareLabel = rawShare !== null ? formatPercent(rawShare) : 'N/A'
+        const basisLabel =
+          entry.shareBasis === 'tvl+borrowed' ? 'TVL + borrowed' : 'TVL'
+        const severity: AlertSeverity =
+          rawShare !== null && rawShare >= thresholdProtocolShare * 2
+            ? 'high'
+            : 'medium'
+
+        results.push({
+          id: `protocol-share-${baseKey}`,
+          severity,
+          category: 'protocol-share',
+          title: `${protocolName} exposure is large vs ${basisLabel}`,
+          detail: `Your position equals about ${shareLabel} of tracked ${basisLabel}.`,
+        })
+      }
+
+      if (
+        entry.borrowed !== null &&
+        entry.tvl !== null &&
+        entry.tvl > 0 &&
+        entry.borrowed >= 0
+      ) {
+        const borrowedRatio = (entry.borrowed / entry.tvl) * 100
+        if (borrowedRatio >= thresholdBorrowedRatio) {
+          const severity: AlertSeverity =
+            borrowedRatio >= Math.max(thresholdBorrowedRatio * 1.25, 90)
+              ? 'high'
+              : 'medium'
+          results.push({
+            id: `borrowed-ratio-${baseKey}`,
+            severity,
+            category: 'leverage',
+            title: `${protocolName} leverage is elevated`,
+            detail: `Borrowed value is ${formatPercent(
+              borrowedRatio
+            )} of TVL.`,
+          })
+        }
+      } else if (alertPreferences.includeDataGaps && entry.tvl === null) {
+        results.push({
+          id: `tvl-missing-${baseKey}`,
+          severity: 'low',
+          category: 'data',
+          title: `TVL data missing for ${protocolName}`,
+          detail: 'Protocol TVL is unavailable, limiting size and liquidity checks.',
+        })
+      }
+
+      if (!Number.isFinite(entry.holding.price) || entry.holding.price <= 0) {
+        results.push({
+          id: `pricing-missing-${baseKey}`,
+          severity: 'low',
+          category: 'pricing',
+          title: `Price feed missing for ${entry.holding.symbol}`,
+          detail: 'Portfolio value may be understated until pricing data is available.',
+        })
+      }
+    })
+
+    return results.sort((a, b) => {
+      const rankDelta = severityRank[a.severity] - severityRank[b.severity]
+      if (rankDelta !== 0) return rankDelta
+      return a.title.localeCompare(b.title)
+    })
+  }, [alertPreferences, enrichedHoldings])
+
+  const alertSummary = useMemo(() => {
+    return alerts.reduce(
+      (acc, alert) => {
+        acc[alert.severity] += 1
+        return acc
+      },
+      { high: 0, medium: 0, low: 0 }
+    )
+  }, [alerts])
+
+  const notificationsEnabled =
+    notificationStatus === 'granted' && notificationPreferences.enabled
+
+  useEffect(() => {
+    if (!notificationsEnabled) return
+    if (typeof window === 'undefined' || !('Notification' in window)) return
+
+    const activeIds = new Set(alerts.map((alert) => alert.id))
+    notifiedAlertIds.current.forEach((id) => {
+      if (!activeIds.has(id)) {
+        notifiedAlertIds.current.delete(id)
+      }
+    })
+
+    const newAlerts = alerts.filter(
+      (alert) =>
+        notificationPreferences.levels[alert.severity] &&
+        !notifiedAlertIds.current.has(alert.id)
+    )
+
+    newAlerts.forEach((alert) => {
+      new Notification(`RWA ${ALERT_SEVERITY_LABELS[alert.severity]} alert`, {
+        body: alert.detail,
+        icon: '/logo.svg',
+        tag: alert.id,
+      })
+      notifiedAlertIds.current.add(alert.id)
+    })
+  }, [alerts, notificationsEnabled, notificationPreferences.levels])
+
+  const notificationStatusLabel = (() => {
+    switch (notificationStatus) {
+      case 'granted':
+        return 'Granted'
+      case 'denied':
+        return 'Denied'
+      case 'unsupported':
+        return 'Not supported'
+      default:
+        return 'Not enabled'
+    }
+  })()
+
+  const notificationStatusMeta = (() => {
+    switch (notificationStatus) {
+      case 'granted':
+        return {
+          text: 'Browser permission granted. Alerts can be delivered when enabled.',
+          className: 'text-emerald-300',
+        }
+      case 'denied':
+        return {
+          text: 'Notifications are blocked in your browser settings.',
+          className: 'text-red-300',
+        }
+      case 'unsupported':
+        return {
+          text: 'This browser does not support desktop notifications.',
+          className: 'text-gray-500',
+        }
+      default:
+        return {
+          text: 'Click Enable to request notification permission.',
+          className: 'text-gray-500',
+        }
+    }
+  })()
+
+  const showTestNotification = process.env.NODE_ENV !== 'production'
+
   const chartColors = ['#3b82f6', '#10b981', '#f97316', '#a855f7', '#ef4444', '#14b8a6']
 
   const chartData = useMemo(
@@ -219,6 +690,241 @@ export default function PortfolioPage() {
       <h1 className="text-2xl font-bold mb-4">My Portfolio</h1>
       <p className="mb-2 text-gray-400">Wallet: {address}</p>
       <p className="mb-6 font-semibold">Total value: {formatCurrency(totalValue)}</p>
+
+      <div className="mb-6 grid gap-4 lg:grid-cols-[2fr,1fr]">
+        <div className="rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Risk alerts</h2>
+              <p className="mt-1 text-xs text-gray-400">
+                Signals blend protocol risk, concentration, and leverage checks.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {(Object.keys(ALERT_SEVERITY_LABELS) as AlertSeverity[]).map(
+                (severity) => (
+                  <span
+                    key={severity}
+                    className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${ALERT_BADGE_CLASSES[severity]}`}
+                  >
+                    <span className={`h-2 w-2 rounded-full ${ALERT_DOT_CLASSES[severity]}`} />
+                    {ALERT_SEVERITY_LABELS[severity]} {alertSummary[severity]}
+                  </span>
+                )
+              )}
+            </div>
+          </div>
+
+          {alerts.length > 0 ? (
+            <ul className="mt-4 space-y-3">
+              {alerts.map((alert) => (
+                <li
+                  key={alert.id}
+                  className={`flex flex-wrap gap-3 rounded-lg border px-4 py-3 ${ALERT_CONTAINER_CLASSES[alert.severity]}`}
+                >
+                  <span
+                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${ALERT_DOT_CLASSES[alert.severity]}`}
+                  />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-white">{alert.title}</p>
+                    <p className="mt-1 text-xs text-gray-200/80">{alert.detail}</p>
+                  </div>
+                  <span
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${ALERT_BADGE_CLASSES[alert.severity]}`}
+                  >
+                    {ALERT_SEVERITY_LABELS[alert.severity]}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-4 text-sm text-gray-500">
+              No alerts are triggered for this portfolio right now.
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
+            <h2 className="text-lg font-semibold text-white">Notifications</h2>
+            <p className="mt-1 text-xs text-gray-400">
+              Enable browser alerts for new portfolio risk signals.
+            </p>
+            <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
+              <span>Status: {notificationStatusLabel}</span>
+              <button
+                type="button"
+                onClick={requestNotificationPermission}
+                disabled={notificationStatus === 'granted' || notificationStatus === 'unsupported'}
+                className="rounded-md border border-blue-500/40 px-3 py-1 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Enable
+              </button>
+            </div>
+            <p className={`mt-2 text-xs ${notificationStatusMeta.className}`}>
+              {notificationStatusMeta.text}
+            </p>
+            <label className="mt-4 flex items-center gap-2 text-sm text-gray-300">
+              <input
+                type="checkbox"
+                checked={notificationPreferences.enabled}
+                onChange={(event) =>
+                  setNotificationPreferences((prev) => ({
+                    ...prev,
+                    enabled: event.target.checked,
+                  }))
+                }
+                disabled={notificationStatus !== 'granted'}
+                className="h-4 w-4 rounded border-gray-600 bg-[#0f1624] text-blue-500 focus:ring-blue-500 disabled:cursor-not-allowed"
+              />
+              Send desktop notifications
+            </label>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              {(Object.keys(ALERT_SEVERITY_LABELS) as AlertSeverity[]).map(
+                (severity) => (
+                  <label
+                    key={severity}
+                    className={`flex items-center gap-2 rounded-full border px-2.5 py-1 ${ALERT_BADGE_CLASSES[severity]}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={notificationPreferences.levels[severity]}
+                      onChange={(event) =>
+                        setNotificationPreferences((prev) => ({
+                          ...prev,
+                          levels: {
+                            ...prev.levels,
+                            [severity]: event.target.checked,
+                          },
+                        }))
+                      }
+                      disabled={notificationStatus !== 'granted'}
+                      className="h-3.5 w-3.5 rounded border-gray-600 bg-[#0f1624] text-blue-500 focus:ring-blue-500 disabled:cursor-not-allowed"
+                    />
+                    {ALERT_SEVERITY_LABELS[severity]}
+                  </label>
+                )
+              )}
+            </div>
+            {showTestNotification ? (
+              <button
+                type="button"
+                onClick={sendTestNotification}
+                disabled={!notificationsEnabled}
+                className="mt-3 w-full rounded-md border border-gray-600 px-3 py-2 text-xs font-semibold text-gray-200 transition hover:border-blue-500/60 hover:text-blue-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Send test notification
+              </button>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
+            <h2 className="text-lg font-semibold text-white">Alert thresholds</h2>
+            <p className="mt-1 text-xs text-gray-400">
+              Adjust when concentration and leverage alerts trigger.
+            </p>
+            <div className="mt-4 space-y-3 text-xs text-gray-400">
+              <label className="flex items-center justify-between gap-3">
+                <span>Portfolio concentration</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={alertPreferences.concentrationThreshold}
+                    onChange={(event) => {
+                      const value = Number(event.target.value)
+                      setAlertPreferences((prev) => ({
+                        ...prev,
+                        concentrationThreshold: clampPercent(
+                          value,
+                          prev.concentrationThreshold
+                        ),
+                      }))
+                    }}
+                    className="w-20 rounded-md border border-gray-700 bg-[#0f1624] px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
+                  />
+                  <span>%</span>
+                </div>
+              </label>
+              <label className="flex items-center justify-between gap-3">
+                <span>Protocol share</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={alertPreferences.protocolShareThreshold}
+                    onChange={(event) => {
+                      const value = Number(event.target.value)
+                      setAlertPreferences((prev) => ({
+                        ...prev,
+                        protocolShareThreshold: clampPercent(
+                          value,
+                          prev.protocolShareThreshold
+                        ),
+                      }))
+                    }}
+                    className="w-20 rounded-md border border-gray-700 bg-[#0f1624] px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
+                  />
+                  <span>%</span>
+                </div>
+              </label>
+              <label className="flex items-center justify-between gap-3">
+                <span>Borrowed ratio</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={alertPreferences.borrowedRatioThreshold}
+                    onChange={(event) => {
+                      const value = Number(event.target.value)
+                      setAlertPreferences((prev) => ({
+                        ...prev,
+                        borrowedRatioThreshold: clampPercent(
+                          value,
+                          prev.borrowedRatioThreshold
+                        ),
+                      }))
+                    }}
+                    className="w-20 rounded-md border border-gray-700 bg-[#0f1624] px-2 py-1 text-xs text-white focus:border-blue-500 focus:outline-none"
+                  />
+                  <span>%</span>
+                </div>
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={alertPreferences.includeModerateRisk}
+                  onChange={(event) =>
+                    setAlertPreferences((prev) => ({
+                      ...prev,
+                      includeModerateRisk: event.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-gray-600 bg-[#0f1624] text-blue-500 focus:ring-blue-500"
+                />
+                Include moderate risk signals
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={alertPreferences.includeDataGaps}
+                  onChange={(event) =>
+                    setAlertPreferences((prev) => ({
+                      ...prev,
+                      includeDataGaps: event.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 rounded border-gray-600 bg-[#0f1624] text-blue-500 focus:ring-blue-500"
+                />
+                Include data gap alerts
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {hasChartData ? (
         <div className="mb-6 rounded-xl border border-gray-700 bg-[#121826] p-6 shadow">
