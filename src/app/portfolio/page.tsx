@@ -142,8 +142,8 @@ const normalizeNotificationPreferences = (
   }
 
   const candidate = value as Partial<NotificationPreferences>
-  const levelsCandidate: Partial<Record<AlertSeverity, boolean>> =
-    candidate.levels ?? {}
+  const levelsCandidate =
+    candidate.levels as Partial<Record<AlertSeverity, boolean>> | undefined
 
   return {
     enabled:
@@ -152,15 +152,15 @@ const normalizeNotificationPreferences = (
         : DEFAULT_NOTIFICATION_PREFERENCES.enabled,
     levels: {
       high:
-        typeof levelsCandidate.high === 'boolean'
+        typeof levelsCandidate?.high === 'boolean'
           ? levelsCandidate.high
           : DEFAULT_NOTIFICATION_PREFERENCES.levels.high,
       medium:
-        typeof levelsCandidate.medium === 'boolean'
+        typeof levelsCandidate?.medium === 'boolean'
           ? levelsCandidate.medium
           : DEFAULT_NOTIFICATION_PREFERENCES.levels.medium,
       low:
-        typeof levelsCandidate.low === 'boolean'
+        typeof levelsCandidate?.low === 'boolean'
           ? levelsCandidate.low
           : DEFAULT_NOTIFICATION_PREFERENCES.levels.low,
     },
