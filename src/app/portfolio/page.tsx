@@ -7,12 +7,33 @@ import { fetchPortfolio, type PortfolioHolding } from '@/lib/portfolio'
 import { ResponsiveContainer, PieChart, Pie, Tooltip as RechartsTooltip, Legend, Cell } from 'recharts'
 import { fetchRWAProtocols, extractBorrowedValue } from '@/lib/defillama'
 import { getProtocolRiskSummary } from '@/lib/risk'
+import {
+  buildComplianceProfile,
+  formatComplianceDate,
+  resolveDocumentStatus,
+} from '@/lib/compliance'
+import type {
+  ComplianceBadgeStatus,
+  ComplianceChecklistStatus,
+  ComplianceDocumentStatus,
+} from '@/config/compliance'
 
 type ProtocolSummary = {
   slug: string
   name: string
   tvl?: number
   borrowed?: number
+  audits?: string | number | null
+  audit_links?: string[]
+  audit_note?: string | null
+  description?: string | null
+  methodology?: string | null
+  category?: string | null
+  tags?: string[]
+  chain?: string | null
+  chains?: string[]
+  hallmarks?: Array<[number, string]>
+  url?: string | null
   [key: string]: unknown
 }
 
@@ -28,6 +49,7 @@ type AlertCategory =
   | 'concentration'
   | 'protocol-share'
   | 'leverage'
+  | 'compliance'
   | 'pricing'
   | 'data'
 
@@ -96,6 +118,27 @@ const ALERT_DOT_CLASSES: Record<AlertSeverity, string> = {
   high: 'bg-red-400',
   medium: 'bg-amber-400',
   low: 'bg-sky-400',
+}
+
+const COMPLIANCE_BADGE_CLASSES: Record<ComplianceBadgeStatus, string> = {
+  verified: 'border-emerald-400/60 text-emerald-300 bg-emerald-500/10',
+  pending: 'border-amber-400/60 text-amber-300 bg-amber-500/10',
+  missing: 'border-gray-500/60 text-gray-300 bg-gray-500/10',
+  expired: 'border-red-400/60 text-red-300 bg-red-500/10',
+}
+
+const COMPLIANCE_DOC_CLASSES: Record<ComplianceDocumentStatus, string> = {
+  active: 'border-emerald-400/60 text-emerald-300 bg-emerald-500/10',
+  pending: 'border-amber-400/60 text-amber-300 bg-amber-500/10',
+  missing: 'border-gray-500/60 text-gray-300 bg-gray-500/10',
+  expired: 'border-red-400/60 text-red-300 bg-red-500/10',
+}
+
+const COMPLIANCE_CHECK_CLASSES: Record<ComplianceChecklistStatus, string> = {
+  pass: 'border-emerald-400/60 text-emerald-300 bg-emerald-500/10',
+  watch: 'border-amber-400/60 text-amber-300 bg-amber-500/10',
+  fail: 'border-red-400/60 text-red-300 bg-red-500/10',
+  missing: 'border-gray-500/60 text-gray-300 bg-gray-500/10',
 }
 
 const clampPercent = (value: number, fallback: number) => {
@@ -211,6 +254,12 @@ const formatPercent = (value: number | null) => {
   return `${value.toFixed(digits)}%`
 }
 
+const formatHash = (value: string | undefined) => {
+  if (!value) return 'N/A'
+  if (value.length <= 12) return value
+  return `${value.slice(0, 6)}...${value.slice(-4)}`
+}
+
 export default function PortfolioPage() {
   const { address, isConnected } = useAccount()
   const [mounted, setMounted] = useState(false)
@@ -322,6 +371,7 @@ export default function PortfolioPage() {
       const value = Number.isFinite(holding.value) ? holding.value : 0
       const slug = protocolMeta?.slug
       const risk = slug ? getProtocolRiskSummary(slug) : null
+      const compliance = protocolData ? buildComplianceProfile(protocolData) : null
 
       return {
         holding,
@@ -331,6 +381,7 @@ export default function PortfolioPage() {
         borrowed,
         value,
         risk,
+        compliance,
       }
     })
   }, [portfolio, protocolsBySlug])
@@ -460,6 +511,35 @@ export default function PortfolioPage() {
           title: `Risk profile missing for ${protocolName}`,
           detail: 'Risk scoring data is unavailable for this protocol.',
         })
+      }
+
+      if (entry.compliance) {
+        const expiredDocs = entry.compliance.documents.filter(
+          (document) => resolveDocumentStatus(document) === 'expired'
+        )
+        const missingDocs = entry.compliance.documents.filter(
+          (document) => resolveDocumentStatus(document) === 'missing'
+        )
+
+        if (expiredDocs.length > 0) {
+          results.push({
+            id: `compliance-expired-${baseKey}`,
+            severity: 'high',
+            category: 'compliance',
+            title: `${protocolName} attestations expired`,
+            detail: `${expiredDocs.length} compliance document(s) expired. Review latest attestations.`,
+          })
+        }
+
+        if (missingDocs.length > 0 && alertPreferences.includeDataGaps) {
+          results.push({
+            id: `compliance-missing-${baseKey}`,
+            severity: 'medium',
+            category: 'compliance',
+            title: `${protocolName} attestations missing`,
+            detail: `${missingDocs.length} compliance document(s) missing or unpublished.`,
+          })
+        }
       }
 
       if (
@@ -980,6 +1060,7 @@ export default function PortfolioPage() {
             protocolShareCapped,
             portfolioShare,
             risk,
+            compliance,
           }) => {
             const protocolName = protocolMeta?.name ?? protocolData?.name ?? holding.symbol
             const possessiveSuffix = protocolName.endsWith("'s") ? '' : "'s"
@@ -1029,6 +1110,20 @@ export default function PortfolioPage() {
                   })
                 : null
             const riskScoreText = risk ? risk.score.toFixed(1) : null
+            const complianceProfile = compliance
+            const complianceBadges = complianceProfile?.badges ?? []
+            const complianceDocs = complianceProfile?.documents ?? []
+            const resolvedDocs = complianceDocs.map((document) => ({
+              ...document,
+              resolvedStatus: resolveDocumentStatus(document),
+            }))
+            const complianceTimeline = complianceProfile?.timeline ?? []
+            const complianceChecklist = complianceProfile?.checklist ?? []
+            const complianceHasDetails =
+              complianceBadges.length > 0 ||
+              resolvedDocs.length > 0 ||
+              complianceTimeline.length > 0 ||
+              complianceChecklist.length > 0
 
             return (
               <div
@@ -1179,6 +1274,149 @@ export default function PortfolioPage() {
                       </ul>
                     )}
                   </div>
+                ) : null}
+
+                {complianceProfile && complianceHasDetails ? (
+                  <details className="mt-6 rounded-lg border border-gray-700 bg-[#0f1624] p-4">
+                    <summary className="cursor-pointer text-sm font-semibold text-gray-200">
+                      Compliance & attestations
+                    </summary>
+                    <div className="mt-3 space-y-4 text-xs text-gray-400">
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1">
+                          <p className="text-gray-300">
+                            Issuer: {complianceProfile.issuer}
+                          </p>
+                          <p className="text-gray-300">
+                            Category: {complianceProfile.category}
+                          </p>
+                          <p className="text-gray-300">
+                            Coverage: {complianceProfile.coverage}
+                          </p>
+                          <p className="text-gray-300">
+                            Methodology: {complianceProfile.methodology ?? 'Not disclosed'}
+                          </p>
+                        </div>
+                        {complianceBadges.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {complianceBadges.map((badge) => (
+                              <span
+                                key={badge.id}
+                                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${COMPLIANCE_BADGE_CLASSES[badge.status]}`}
+                                title={badge.detail}
+                              >
+                                {badge.label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {resolvedDocs.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold text-gray-200">Document vault</p>
+                          <ul className="mt-2 space-y-2">
+                            {resolvedDocs.map((document) => (
+                              <li
+                                key={document.id}
+                                className="rounded-md border border-gray-700 bg-[#0b1220] p-3"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <p className="text-sm font-semibold text-gray-200">
+                                      {document.title}
+                                    </p>
+                                    <p className="text-[11px] text-gray-400">
+                                      Issuer: {document.issuer}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${COMPLIANCE_DOC_CLASSES[document.resolvedStatus]}`}
+                                  >
+                                    {document.resolvedStatus}
+                                  </span>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-gray-400">
+                                  <span>Issued: {formatComplianceDate(document.issuedAt)}</span>
+                                  <span>
+                                    Expires: {formatComplianceDate(document.expiresAt)}
+                                  </span>
+                                  <span>Hash: {formatHash(document.documentHash)}</span>
+                                  {document.url ? (
+                                    <a
+                                      href={document.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-blue-400 hover:text-blue-300"
+                                    >
+                                      View
+                                    </a>
+                                  ) : null}
+                                </div>
+                                {document.notes ? (
+                                  <p className="mt-2 text-[11px] text-gray-500">
+                                    {document.notes}
+                                  </p>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {complianceChecklist.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold text-gray-200">Compliance checklist</p>
+                          <ul className="mt-2 space-y-2">
+                            {complianceChecklist.map((item) => (
+                              <li
+                                key={item.id}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-gray-700 bg-[#0b1220] px-3 py-2"
+                              >
+                                <div>
+                                  <p className="text-[13px] text-gray-200">{item.label}</p>
+                                  <p className="text-[11px] text-gray-400">{item.detail}</p>
+                                </div>
+                                <span
+                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide ${COMPLIANCE_CHECK_CLASSES[item.status]}`}
+                                >
+                                  {item.status}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {complianceTimeline.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold text-gray-200">Attestation timeline</p>
+                          <ul className="mt-2 space-y-2">
+                            {complianceTimeline.map((event) => (
+                              <li
+                                key={event.id}
+                                className="rounded-md border border-gray-700 bg-[#0b1220] px-3 py-2"
+                              >
+                                <p className="text-[11px] text-gray-400">
+                                  {formatComplianceDate(event.date)}
+                                </p>
+                                <p className="text-[13px] text-gray-200">{event.label}</p>
+                                <p className="text-[11px] text-gray-400">{event.detail}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {complianceProfile.notes && complianceProfile.notes.length > 0 ? (
+                        <ul className="space-y-1 text-[11px] text-gray-500">
+                          {complianceProfile.notes.map((note) => (
+                            <li key={note}>- {note}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  </details>
                 ) : null}
               </div>
             )
