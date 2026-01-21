@@ -10,17 +10,17 @@ import {
 export type ComplianceSourceProtocol = {
   slug?: string
   name?: string
-  category?: string
-  chain?: string
+  category?: string | null
+  chain?: string | null
   chains?: string[]
-  description?: string
-  methodology?: string
+  description?: string | null
+  methodology?: string | null
   tags?: string[]
   audits?: string | number | null
   audit_links?: string[]
   audit_note?: string | null
   hallmarks?: Array<[number, string]>
-  url?: string
+  url?: string | null
 }
 
 const parseDate = (value: string | undefined) => {
